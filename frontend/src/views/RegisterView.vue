@@ -100,8 +100,8 @@ async function handleRegister() {
   loading.value = true
   try {
     await register(email.value, password.value, firstName.value, lastName.value)
-    successMsg.value = 'Account created! Redirecting to login...'
-    setTimeout(() => router.push('/login'), 1500)
+    successMsg.value = 'Account created! Check your email for a verification code...'
+    setTimeout(() => router.push({ path: '/verify', query: { email: email.value } }), 1500)
   } catch (e) {
     errorMsg.value = e.message
   } finally {

@@ -1,42 +1,58 @@
-const API_BASE = import.meta.env.VITE_API_URL || ''
+import {
+  CognitoUserPool,
+  CognitoUser,
+  AuthenticationDetails,
+  CognitoUserAttribute,
+} from 'amazon-cognito-identity-js'
 
-export async function register(email, password, firstName, lastName) {
-  // TODO: replace with real API call
-  // const res = await fetch(`${API_BASE}/auth/register`, {
-  //   method: 'POST',
-  //   headers: { 'Content-Type': 'application/json' },
-  //   body: JSON.stringify({ email, password, firstName, lastName })
-  // })
-  // if (!res.ok) throw new Error((await res.json()).error)
+const userPool = new CognitoUserPool({
+  UserPoolId: import.meta.env.VITE_COGNITO_USER_POOL_ID,
+  ClientId: import.meta.env.VITE_COGNITO_CLIENT_ID,
+})
 
-  // Mock
-  const users = JSON.parse(localStorage.getItem('mock_users') || '{}')
-  if (users[email]) throw new Error('User already exists')
-  users[email] = { password, firstName, lastName }
-  localStorage.setItem('mock_users', JSON.stringify(users))
+export function register(email, password, firstName, lastName) {
+  return new Promise((resolve, reject) => {
+    const attrs = [
+      new CognitoUserAttribute({ Name: 'given_name', Value: firstName }),
+      new CognitoUserAttribute({ Name: 'family_name', Value: lastName }),
+    ]
+    userPool.signUp(email, password, attrs, null, (err, result) => {
+      if (err) return reject(new Error(err.message))
+      resolve(result)
+    })
+  })
 }
 
-export async function login(email, password) {
-  // TODO: replace with real API call
-  // const res = await fetch(`${API_BASE}/auth/login`, {
-  //   method: 'POST',
-  //   headers: { 'Content-Type': 'application/json' },
-  //   body: JSON.stringify({ email, password })
-  // })
-  // if (!res.ok) throw new Error((await res.json()).error)
-  // const { id_token } = await res.json()
-  // localStorage.setItem('id_token', id_token)
+export function confirmRegistration(email, code) {
+  return new Promise((resolve, reject) => {
+    const user = new CognitoUser({ Username: email, Pool: userPool })
+    user.confirmRegistration(code, true, (err) => {
+      if (err) return reject(new Error(err.message))
+      resolve()
+    })
+  })
+}
 
-  // Mock
-  const users = JSON.parse(localStorage.getItem('mock_users') || '{}')
-  const user = users[email]
-  if (!user || user.password !== password) throw new Error('Invalid email or password')
-  localStorage.setItem('id_token', 'mock-token-' + email)
-  localStorage.setItem('user_email', email)
-  localStorage.setItem('user_name', `${user.firstName} ${user.lastName}`)
+export function login(email, password) {
+  return new Promise((resolve, reject) => {
+    const authDetails = new AuthenticationDetails({ Username: email, Password: password })
+    const user = new CognitoUser({ Username: email, Pool: userPool })
+    user.authenticateUser(authDetails, {
+      onSuccess(session) {
+        localStorage.setItem('id_token', session.getIdToken().getJwtToken())
+        localStorage.setItem('user_email', email)
+        resolve(session)
+      },
+      onFailure(err) {
+        reject(new Error(err.message))
+      },
+    })
+  })
 }
 
 export function logout() {
+  const user = userPool.getCurrentUser()
+  if (user) user.signOut()
   localStorage.removeItem('id_token')
   localStorage.removeItem('user_email')
 }
