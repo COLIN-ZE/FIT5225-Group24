@@ -2,6 +2,10 @@
   <div class="home">
     <nav>
       <span class="nav-brand">AussieEcoLense</span>
+      <div class="nav-links">
+        <router-link to="/home">Upload</router-link>
+        <router-link to="/query">Query</router-link>
+      </div>
       <span class="nav-user">Welcome, {{ userEmail }}</span>
       <button class="btn-logout" @click="handleLogout">Logout</button>
     </nav>
@@ -329,7 +333,24 @@ nav {
   box-shadow: 0 2px 8px rgba(0,0,0,0.08);
   flex-wrap: wrap;
 }
-.nav-brand { font-weight: 700; font-size: 18px; color: #1a1a2e; flex: 1; }
+.nav-brand { font-weight: 700; font-size: 18px; color: #1a1a2e; }
+.nav-links {
+  display: flex;
+  gap: 8px;
+  flex: 1;
+}
+.nav-links a {
+  padding: 7px 10px;
+  border-radius: 6px;
+  color: #4b5b6b;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 700;
+}
+.nav-links a.router-link-active {
+  background: #e8f2ff;
+  color: #2f6fb3;
+}
 .nav-user  { font-size: 14px; color: #555; }
 .btn-logout {
   padding: 7px 16px;
