@@ -274,11 +274,11 @@ async function handleUpload() {
   videoResults.value = []
 
   try {
-    // Step 1: 计算 hash
+   
     uploadStep.value = 'hashing'
     const fileHash = await hashFile(selectedFile.value)
 
-    // Step 2: 请求 presigned URL，检查是否重复
+  
     uploadStep.value = 'requesting'
     const { uploadUrl, fileKey, exists } = await requestUploadUrl(
       selectedFile.value.name,
@@ -286,7 +286,7 @@ async function handleUpload() {
       fileHash,
     )
 
-    // Step 3: 上传到 S3（重复文件跳过）
+  
     if (exists) {
       isDuplicate.value = true
     } else {
@@ -296,7 +296,7 @@ async function handleUpload() {
       })
     }
 
-    // Step 4: 上传完成后轮询结果（后端由 S3 Event 自动触发检测）
+  
     uploadStep.value = 'analysing'
     const data = await pollResults(fileKey)
 
