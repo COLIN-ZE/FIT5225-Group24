@@ -5,7 +5,11 @@
       "Bash(npm create *)",
       "Bash(npm install *)",
       "Bash(npm run *)",
-      "Bash(timeout 4)"
+      "Bash(timeout 4)",
+      "Bash(Remove-Item -Force \"E:\\\\Monash\\\\FIT5225\\\\FIT5225-Group24\\\\frontend\\\\src\\\\utils\\\\api.js\")",
+      "Bash(Remove-Item -Recurse -Force \"E:\\\\Monash\\\\FIT5225\\\\FIT5225-Group24\\\\backend\")",
+      "PowerShell(New-Item *)",
+      "PowerShell(Move-Item *)"
     ]
   }
 }

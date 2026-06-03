@@ -72,7 +72,7 @@
 <script setup>
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { register } from '../utils/auth'
+import { register } from '../api/auth'
 
 const firstName = ref('')
 const lastName = ref('')
