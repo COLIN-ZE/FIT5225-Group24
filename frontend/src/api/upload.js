@@ -7,7 +7,9 @@ export async function requestUploadUrl(filename, contentType, fileHash) {
     body: JSON.stringify({ filename, contentType, fileHash }),
   })
   if (!res.ok) throw new Error(`Failed to get upload URL (${res.status})`)
-  return res.json()  // { uploadUrl, fileKey } or { exists: true, fileKey }
+  const { code, message, data } = await res.json()
+  if (code !== 200) throw new Error(message || 'Failed to get upload URL')
+  return data  // { uploadUrl, fileKey } or { exists: true, fileKey }
 }
 
 // PUT file directly to S3 via presigned URL, with upload progress callback
@@ -39,8 +41,10 @@ export async function pollResults(fileKey, maxWaitMs = 60000) {
       headers: authHeaders(),
     })
     if (!res.ok) throw new Error(`Failed to fetch results (${res.status})`)
-    const data = await res.json()
-    if (data.status === 'done') return data.results
+    const { code, message, data } = await res.json()
+    if (code === 200) return data.results   // done
+    if (code === 202) continue              // still processing
+    throw new Error(message || 'Detection failed')
   }
   throw new Error('Detection timed out. Please try again.')
 }

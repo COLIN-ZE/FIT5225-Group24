@@ -285,8 +285,6 @@ async function handleUpload() {
       selectedFile.value.type,
       fileHash,
     )
-
-  
     if (exists) {
       isDuplicate.value = true
     } else {
@@ -294,9 +292,7 @@ async function handleUpload() {
       await uploadToS3(uploadUrl, selectedFile.value, (pct) => {
         uploadProgress.value = pct
       })
-    }
-
-  
+    }  
     uploadStep.value = 'analysing'
     const data = await pollResults(fileKey)
 
