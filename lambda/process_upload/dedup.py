@@ -4,21 +4,30 @@ from pathlib import Path
 
 import requests
 
-# Local dev: JSON file tracks seen SHA-256 values.
-LOCAL_DEDUP_PATH = Path(__file__).resolve().parent / "output" / ".dedup_cache.json"
+
+def _local_dedup_path() -> Path:
+    """Writable path: /tmp on Lambda; output/ for local test_local.py."""
+    override = os.environ.get("DEDUP_CACHE_PATH", "").strip()
+    if override:
+        return Path(override)
+    if os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
+        return Path("/tmp/.dedup_cache.json")
+    return Path(__file__).resolve().parent / "output" / ".dedup_cache.json"
 
 
 def _load_local_cache() -> set[str]:
-    if not LOCAL_DEDUP_PATH.exists():
+    path = _local_dedup_path()
+    if not path.exists():
         return set()
-    with open(LOCAL_DEDUP_PATH, encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         data = json.load(f)
     return set(data.get("hashes", []))
 
 
 def _save_local_cache(hashes: set[str]) -> None:
-    LOCAL_DEDUP_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(LOCAL_DEDUP_PATH, "w", encoding="utf-8") as f:
+    path = _local_dedup_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
         json.dump({"hashes": sorted(hashes)}, f, indent=2)
 
 

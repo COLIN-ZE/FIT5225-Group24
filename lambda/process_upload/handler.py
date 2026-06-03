@@ -1,14 +1,18 @@
 """
-Member B: S3 upload processor (local dev + AWS Lambda entry point).
+Member B: S3 upload processor.
 
-Local:  python test_local.py [path/to/file]
-Lambda: set handler to handler.lambda_handler
+S3 layout (bucket aussie-ecolens-media-storage-2026):
+  raw/        — frontend uploads (presigned PUT)
+  thumb/      — 400px previews for UI
+  ai-ready/   — 1080p-standardized stills / video frames for GCP ML
+  rejected/   — duplicate uploads
 """
 
 from __future__ import annotations
 
 import json
 import os
+import shutil
 import urllib.parse
 from pathlib import Path
 
@@ -16,43 +20,71 @@ import boto3
 
 from checksum import sha256_file, sha256_stream
 from dedup import is_duplicate
-from media import create_thumbnail, extract_frames_per_second, file_kind
+from media import (
+    create_ai_ready_image,
+    create_thumbnail,
+    create_video_thumbnail,
+    extract_frames_per_second_1080p,
+    file_kind,
+)
 
 s3 = boto3.client("s3")
 
+RAW_PREFIX = os.environ.get("RAW_PREFIX", "raw/")
 THUMB_PREFIX = os.environ.get("THUMB_PREFIX", "thumb/")
-FRAMES_PREFIX = os.environ.get("FRAMES_PREFIX", "frames/")
+AI_READY_PREFIX = os.environ.get("AI_READY_PREFIX", "ai-ready/")
+REJECTED_PREFIX = os.environ.get("REJECTED_PREFIX", "rejected/")
+
+
+def _rel_from_raw(object_key: str) -> str:
+    if not object_key.startswith(RAW_PREFIX):
+        raise ValueError(f"Not under {RAW_PREFIX}: {object_key}")
+    return object_key[len(RAW_PREFIX) :]
 
 
 def _thumb_key(object_key: str) -> str:
-    base = Path(object_key).name
-    stem = Path(base).stem
-    return f"{THUMB_PREFIX}{stem}_thumb.jpg"
+    rel = _rel_from_raw(object_key)
+    p = Path(rel)
+    return f"{THUMB_PREFIX}{p.parent / (p.stem + '_thumb.jpg')}".replace("\\", "/")
 
 
-def _frames_prefix(object_key: str) -> str:
-    stem = Path(object_key).stem
-    return f"{FRAMES_PREFIX}{stem}/"
+def _ai_ready_image_key(object_key: str) -> str:
+    rel = _rel_from_raw(object_key)
+    p = Path(rel)
+    return f"{AI_READY_PREFIX}{p.parent / (p.stem + '.jpg')}".replace("\\", "/")
 
 
-def notify_upload_api_status(file_key: str, status: str = "processing") -> None:
-    """Tell request_upload Lambda (API Gateway URL) that processing started."""
-    base = os.environ.get("UPLOAD_API_URL", "").strip().rstrip("/")
-    if not base or not file_key.startswith(os.environ.get("RAW_PREFIX", "raw/")):
-        return
-    import requests
+def _ai_ready_video_prefix(object_key: str) -> str:
+    rel = _rel_from_raw(object_key)
+    p = Path(rel)
+    return f"{AI_READY_PREFIX}{p.parent / p.stem}/".replace("\\", "/")
 
-    try:
-        requests.post(
-            f"{base}/internal/uploads/{file_key}/status",
-            timeout=10,
+
+def _rejected_key(object_key: str) -> str:
+    rel = _rel_from_raw(object_key)
+    return f"{REJECTED_PREFIX}{rel}".replace("\\", "/")
+
+
+def _move_to_rejected(bucket: str | None, key: str | None, local_path: str | None) -> str:
+    if bucket and key:
+        dest = _rejected_key(key)
+        s3.copy_object(
+            Bucket=bucket,
+            CopySource={"Bucket": bucket, "Key": key},
+            Key=dest,
         )
-    except Exception as exc:  # noqa: BLE001
-        print(f"[notify_upload_api_status] {exc}")
+        s3.delete_object(Bucket=bucket, Key=key)
+        return f"s3://{bucket}/{dest}"
+    if local_path:
+        src = Path(local_path)
+        dest = Path(__file__).parent / "output" / "rejected" / src.name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest)
+        return str(dest.resolve())
+    return ""
 
 
 def notify_gcp(payload: dict) -> None:
-    """POST processing result to teammate C (optional until URL is ready)."""
     url = os.environ.get("GCP_CALLBACK_URL", "").strip()
     if not url:
         print("[notify_gcp] GCP_CALLBACK_URL not set, skipping:", json.dumps(payload))
@@ -71,12 +103,6 @@ def process_file(
     key: str | None = None,
     output_dir: str | Path | None = None,
 ) -> dict:
-    """
-    Core pipeline: checksum -> dedup -> thumbnail or frames -> notify GCP.
-
-    Local mode: pass local_path + output_dir (writes under output/).
-    S3 mode:    pass bucket + key (reads/writes S3).
-    """
     if local_path:
         path = Path(local_path)
         if not path.is_file():
@@ -87,6 +113,7 @@ def process_file(
         kind = file_kind(path)
         out_root = Path(output_dir or Path(__file__).parent / "output")
         out_root.mkdir(parents=True, exist_ok=True)
+        pseudo_key = f"{RAW_PREFIX}local/{path.name}"
     elif bucket and key:
         digest_obj = s3.get_object(Bucket=bucket, Key=key)
         digest = sha256_stream(digest_obj["Body"])
@@ -96,48 +123,60 @@ def process_file(
         kind = file_kind(key)
         out_root = Path("/tmp/out")
         out_root.mkdir(parents=True, exist_ok=True)
+        pseudo_key = key
     else:
         raise ValueError("Provide local_path or (bucket, key)")
 
     file_key_for_status = key if bucket and key else None
 
     if is_duplicate(digest, s3_uri):
+        rejected_uri = _move_to_rejected(bucket, key, local_path)
         result = {
             "status": "duplicate",
             "sha256": digest,
             "s3_uri": s3_uri,
+            "rejected_uri": rejected_uri,
         }
         print(json.dumps(result, indent=2))
         return result
 
-    if file_key_for_status:
-        notify_upload_api_status(file_key_for_status, "processing")
-
     thumb_uri = None
-    frame_uris: list[str] = []
+    ai_ready_uris: list[str] = []
 
     if kind == "image":
         thumb_dest = out_root / "thumb" / f"{Path(work_path).stem}_thumb.jpg"
+        ai_dest = out_root / "ai-ready" / f"{Path(work_path).stem}.jpg"
         create_thumbnail(work_path, thumb_dest)
+        create_ai_ready_image(work_path, ai_dest)
         if bucket and key:
-            thumb_key = _thumb_key(key)
-            s3.upload_file(str(thumb_dest), bucket, thumb_key)
-            thumb_uri = f"s3://{bucket}/{thumb_key}"
+            tk = _thumb_key(key)
+            ak = _ai_ready_image_key(key)
+            s3.upload_file(str(thumb_dest), bucket, tk)
+            s3.upload_file(str(ai_dest), bucket, ak)
+            thumb_uri = f"s3://{bucket}/{tk}"
+            ai_ready_uris = [f"s3://{bucket}/{ak}"]
         else:
             thumb_uri = str(thumb_dest.resolve())
+            ai_ready_uris = [str(ai_dest.resolve())]
 
     elif kind == "video":
-        frames_dir = out_root / "frames" / Path(work_path).stem
-        frame_paths = extract_frames_per_second(work_path, frames_dir)
+        thumb_dest = out_root / "thumb" / f"{Path(work_path).stem}_thumb.jpg"
+        create_video_thumbnail(work_path, thumb_dest)
+        frames_dir = out_root / "ai-ready" / Path(work_path).stem
+        frame_paths = extract_frames_per_second_1080p(work_path, frames_dir)
         if bucket and key:
-            prefix = _frames_prefix(key)
+            tk = _thumb_key(key)
+            s3.upload_file(str(thumb_dest), bucket, tk)
+            thumb_uri = f"s3://{bucket}/{tk}"
+            prefix = _ai_ready_video_prefix(key)
             for fp in frame_paths:
                 fname = Path(fp).name
                 fk = f"{prefix}{fname}"
                 s3.upload_file(fp, bucket, fk)
-                frame_uris.append(f"s3://{bucket}/{fk}")
+                ai_ready_uris.append(f"s3://{bucket}/{fk}")
         else:
-            frame_uris = [str(Path(p).resolve()) for p in frame_paths]
+            thumb_uri = str(thumb_dest.resolve())
+            ai_ready_uris = [str(Path(p).resolve()) for p in frame_paths]
 
     else:
         raise ValueError(f"Unsupported file type: {work_path}")
@@ -146,10 +185,10 @@ def process_file(
         "status": "processed",
         "sha256": digest,
         "s3_uri": s3_uri,
-        "fileKey": file_key_for_status,
+        "fileKey": file_key_for_status or pseudo_key,
         "media_type": kind,
         "thumbnail_uri": thumb_uri,
-        "frame_uris": frame_uris,
+        "ai_ready_uris": ai_ready_uris,
     }
 
     notify_gcp(result)
@@ -158,7 +197,6 @@ def process_file(
 
 
 def lambda_handler(event, context):
-    """AWS Lambda entry: S3 ObjectCreated notification."""
     records = event.get("Records", [])
     if not records:
         return {"statusCode": 400, "body": "No S3 records"}
@@ -167,7 +205,7 @@ def lambda_handler(event, context):
     for record in records:
         bucket = record["s3"]["bucket"]["name"]
         key = urllib.parse.unquote_plus(record["s3"]["object"]["key"])
-        if not key.startswith(os.environ.get("RAW_PREFIX", "raw/")):
+        if not key.startswith(RAW_PREFIX):
             print(f"Skip non-raw key: {key}")
             continue
         results.append(process_file(bucket=bucket, key=key))

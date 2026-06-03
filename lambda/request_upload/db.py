@@ -1,11 +1,10 @@
-"""Firestore (GCP) with /tmp JSON fallback for local Lambda tests."""
+"""Firestore file_hashes (GCP) with /tmp JSON fallback for local Lambda tests."""
 
 from __future__ import annotations
 
 import json
 import os
 import threading
-from datetime import datetime, timezone
 from typing import Any
 
 from config import FIRESTORE_PROJECT_ID, GOOGLE_APPLICATION_CREDENTIALS, USE_LOCAL_DB
@@ -16,10 +15,6 @@ _LOCAL_PATH = os.environ.get(
 _lock = threading.Lock()
 
 
-def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
 class Database:
     def get_hash_record(self, sha256: str) -> dict[str, Any] | None:
         raise NotImplementedError
@@ -27,22 +22,14 @@ class Database:
     def put_hash_record(self, sha256: str, record: dict[str, Any]) -> None:
         raise NotImplementedError
 
-    def get_upload(self, file_key: str) -> dict[str, Any] | None:
-        raise NotImplementedError
-
-    def put_upload(self, file_key: str, record: dict[str, Any]) -> None:
-        raise NotImplementedError
-
-    def update_upload(self, file_key: str, patch: dict[str, Any]) -> None:
-        raise NotImplementedError
-
 
 class LocalDatabase(Database):
     def _read(self) -> dict[str, Any]:
         if not os.path.exists(_LOCAL_PATH):
-            return {"hashes": {}, "uploads": {}}
+            return {"hashes": {}}
         with open(_LOCAL_PATH, encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+        return {"hashes": data.get("hashes", {})}
 
     def _write(self, data: dict[str, Any]) -> None:
         with open(_LOCAL_PATH, "w", encoding="utf-8") as f:
@@ -58,25 +45,6 @@ class LocalDatabase(Database):
             data.setdefault("hashes", {})[sha256] = record
             self._write(data)
 
-    def get_upload(self, file_key: str) -> dict[str, Any] | None:
-        with _lock:
-            return self._read().get("uploads", {}).get(file_key)
-
-    def put_upload(self, file_key: str, record: dict[str, Any]) -> None:
-        with _lock:
-            data = self._read()
-            data.setdefault("uploads", {})[file_key] = record
-            self._write(data)
-
-    def update_upload(self, file_key: str, patch: dict[str, Any]) -> None:
-        with _lock:
-            data = self._read()
-            uploads = data.setdefault("uploads", {})
-            current = uploads.get(file_key, {})
-            current.update(patch)
-            uploads[file_key] = current
-            self._write(data)
-
 
 class FirestoreDatabase(Database):
     def __init__(self) -> None:
@@ -90,30 +58,6 @@ class FirestoreDatabase(Database):
 
     def put_hash_record(self, sha256: str, record: dict[str, Any]) -> None:
         self._client.collection("file_hashes").document(sha256).set(record)
-
-    def get_upload(self, file_key: str) -> dict[str, Any] | None:
-        doc = self._client.collection("uploads").document(_safe_doc_id(file_key)).get()
-        if not doc.exists:
-            return None
-        data = doc.to_dict() or {}
-        data.setdefault("fileKey", file_key)
-        return data
-
-    def put_upload(self, file_key: str, record: dict[str, Any]) -> None:
-        record = {**record, "fileKey": file_key, "updatedAt": _utc_now()}
-        self._client.collection("uploads").document(_safe_doc_id(file_key)).set(record)
-
-    def update_upload(self, file_key: str, patch: dict[str, Any]) -> None:
-        patch["updatedAt"] = _utc_now()
-        self._client.collection("uploads").document(_safe_doc_id(file_key)).set(
-            patch, merge=True
-        )
-
-
-def _safe_doc_id(file_key: str) -> str:
-    import base64
-
-    return base64.urlsafe_b64encode(file_key.encode()).decode().rstrip("=")
 
 
 _db: Database | None = None

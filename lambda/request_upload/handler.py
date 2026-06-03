@@ -3,9 +3,7 @@ Member B — Upload API Lambda (API Gateway → Lambda).
 
 Routes (match frontend upload.js):
   POST /requestUploadFile
-  GET  /results/{fileKey}
-  POST /internal/uploads/{fileKey}/status   (from process_upload Lambda)
-  POST /internal/uploads/{fileKey}/results  (from teammate C ML)
+  GET  /health
 
 Handler: handler.lambda_handler
 """
@@ -13,25 +11,11 @@ Handler: handler.lambda_handler
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 from auth_cognito import AuthError
 from config import CORS_ORIGIN, S3_BUCKET_NAME
-from routes import (
-    handle_get_results,
-    handle_mark_processing,
-    handle_request_upload,
-    handle_store_results,
-)
-
-RESULTS_RE = re.compile(r"^/results/(?P<file_key>.+)$")
-INTERNAL_STATUS_RE = re.compile(
-    r"^/internal/uploads/(?P<file_key>.+)/status$"
-)
-INTERNAL_RESULTS_RE = re.compile(
-    r"^/internal/uploads/(?P<file_key>.+)/results$"
-)
+from routes import handle_request_upload
 
 
 def _http_method(event: dict[str, Any]) -> str:
@@ -102,26 +86,6 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             )
             return _response(200, payload)
 
-        if method == "GET":
-            m = RESULTS_RE.match(path)
-            if m:
-                payload = handle_get_results(
-                    m.group("file_key"), headers.get("authorization")
-                )
-                status = 200 if payload.get("code") == 200 else 202
-                return _response(status, payload)
-
-        if method == "POST":
-            m = INTERNAL_STATUS_RE.match(path)
-            if m:
-                payload = handle_mark_processing(m.group("file_key"))
-                return _response(200, payload)
-
-            m = INTERNAL_RESULTS_RE.match(path)
-            if m:
-                payload = handle_store_results(m.group("file_key"), _body_json(event))
-                return _response(200, payload)
-
         return _response(404, {"code": 404, "message": "Not found", "data": None})
 
     except AuthError as exc:
@@ -131,8 +95,6 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         )
     except ValueError as exc:
         return _response(400, {"code": 400, "message": str(exc), "data": None})
-    except LookupError as exc:
-        return _response(404, {"code": 404, "message": str(exc), "data": None})
     except Exception as exc:  # noqa: BLE001
         print(f"[error] {exc}")
         return _response(

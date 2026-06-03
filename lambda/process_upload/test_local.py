@@ -39,8 +39,10 @@ def main() -> None:
     print("\nDone.")
     if result["status"] == "processed" and result.get("thumbnail_uri"):
         print(f"Thumbnail: {result['thumbnail_uri']}")
-    if result["status"] == "processed" and result.get("frame_uris"):
-        print(f"Frames: {len(result['frame_uris'])} files")
+    if result["status"] == "processed" and result.get("ai_ready_uris"):
+        print(f"ai-ready: {len(result['ai_ready_uris'])} file(s)")
+    if result["status"] == "duplicate":
+        print(f"rejected: {result.get('rejected_uri')}")
 
 
 if __name__ == "__main__":

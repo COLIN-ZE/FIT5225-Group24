@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import json
 import re
 from typing import Any
-from urllib.parse import unquote
 
-from auth_cognito import AuthError, user_id_from_claims, verify_bearer_token
+from auth_cognito import user_id_from_claims, verify_bearer_token
 from db import get_database
 from s3_service import build_file_key, create_presigned_put_url
 
@@ -17,10 +15,6 @@ db = get_database()
 
 def _ok(data: dict[str, Any] | None = None, message: str = "OK") -> dict[str, Any]:
     return {"code": 200, "message": message, "data": data}
-
-
-def _accepted(message: str = "Processing") -> dict[str, Any]:
-    return {"code": 202, "message": message, "data": None}
 
 
 def handle_request_upload(body: dict[str, Any], authorization: str | None) -> dict[str, Any]:
@@ -50,68 +44,16 @@ def handle_request_upload(body: dict[str, Any], authorization: str | None) -> di
     file_key = build_file_key(user_id, filename)
     upload_url = create_presigned_put_url(file_key, content_type)
 
-    if not db.get_upload(file_key):
-        db.put_upload(
-            file_key,
-            {
-                "sha256": file_hash,
-                "userId": user_id,
-                "filename": filename,
-                "contentType": content_type,
-                "status": "awaiting_upload",
-                "results": None,
-                "videoResults": None,
-            },
-        )
-
     db.put_hash_record(
         file_hash,
-        {"fileKey": file_key, "userId": user_id, "filename": filename},
+        {
+            "fileKey": file_key,
+            "userId": user_id,
+            "filename": filename,
+            "contentType": content_type,
+        },
     )
 
     return _ok(
         {"exists": False, "fileKey": file_key, "uploadUrl": upload_url}
     )
-
-
-def handle_get_results(file_key: str, authorization: str | None) -> dict[str, Any]:
-    verify_bearer_token(authorization)
-    file_key = unquote(file_key)
-
-    record = db.get_upload(file_key)
-    if not record:
-        raise LookupError("Unknown fileKey")
-
-    status = record.get("status", "processing")
-    if status in ("awaiting_upload", "processing", "pending"):
-        return _accepted("Still processing")
-
-    if record.get("results") is not None:
-        return _ok({"results": record["results"]})
-    if record.get("videoResults") is not None:
-        return _ok({"results": record["videoResults"]})
-
-    return _accepted("Still processing")
-
-
-def handle_mark_processing(file_key: str) -> dict[str, Any]:
-    file_key = unquote(file_key)
-    if not db.get_upload(file_key):
-        raise LookupError("Unknown fileKey")
-    db.update_upload(file_key, {"status": "processing"})
-    return _ok({"fileKey": file_key, "status": "processing"})
-
-
-def handle_store_results(file_key: str, body: dict[str, Any]) -> dict[str, Any]:
-    file_key = unquote(file_key)
-    if not db.get_upload(file_key):
-        raise LookupError("Unknown fileKey")
-
-    patch: dict[str, Any] = {"status": body.get("status", "done")}
-    if body.get("results") is not None:
-        patch["results"] = body["results"]
-    if body.get("videoResults") is not None:
-        patch["videoResults"] = body["videoResults"]
-
-    db.update_upload(file_key, patch)
-    return _ok({"fileKey": file_key, "status": patch["status"]})
