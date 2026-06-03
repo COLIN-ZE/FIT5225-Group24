@@ -97,6 +97,12 @@
         <!-- Large file warning -->
         <p v-if="sizeWarning" class="warning">{{ sizeWarning }}</p>
 
+        <!-- Upload progress bar -->
+        <div v-if="uploadStep === 'uploading'" class="progress-wrap">
+          <div class="progress-bar" :style="{ width: uploadProgress + '%' }"></div>
+          <span class="progress-label">Uploading {{ uploadProgress }}%</span>
+        </div>
+
         <!-- Upload button -->
         <button
           class="btn-upload"
@@ -104,7 +110,7 @@
           @click="handleUpload"
         >
           <span v-if="uploading" class="spinner"></span>
-          {{ uploading ? 'Analysing...' : 'Detect Species' }}
+          {{ stepLabel }}
         </button>
 
         <!-- Duplicate notice -->
@@ -161,9 +167,9 @@
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { logout } from '../api/auth'
-import { validateFile } from '../utils/validate'
+import { validateImage, validateVideo } from '../utils/validate'
 import { hashFile } from '../utils/hash'
-import { requestUploadUrl } from '../api/upload'
+import { requestUploadUrl, uploadToS3, pollResults } from '../api/upload'
 
 const userEmail = localStorage.getItem('user_name') || localStorage.getItem('user_email') || 'User'
 const router = useRouter()
@@ -174,6 +180,8 @@ const selectedFile = ref(null)
 const previewUrl = ref('')
 const isDragging = ref(false)
 const uploading = ref(false)
+const uploadStep = ref('')      // 'hashing' | 'requesting' | 'uploading' | 'analysing'
+const uploadProgress = ref(0)
 const isDuplicate = ref(false)
 const errorMsg = ref('')
 const results = ref([])
@@ -190,6 +198,16 @@ const fileSizeLabel = computed(() => {
   if (!selectedFile.value) return ''
   const kb = selectedFile.value.size / 1024
   return kb >= 1024 ? (kb / 1024).toFixed(1) + ' MB' : kb.toFixed(1) + ' KB'
+})
+
+const stepLabel = computed(() => {
+  const labels = {
+    hashing:    'Preparing...',
+    requesting: 'Requesting upload...',
+    uploading:  `Uploading ${uploadProgress.value}%...`,
+    analysing:  'Analysing...',
+  }
+  return labels[uploadStep.value] ?? 'Detect Species'
 })
 
 const sizeWarning = computed(() => {
@@ -221,7 +239,7 @@ function onDrop(e) {
 }
 
 function setFile(file) {
-  const validationError = validateFile(file, activeTab.value)
+  const validationError = activeTab.value === 'image' ? validateImage(file) : validateVideo(file)
   if (validationError) {
     errorMsg.value = validationError
     return
@@ -250,49 +268,46 @@ async function handleUpload() {
   if (!selectedFile.value) return
   uploading.value = true
   isDuplicate.value = false
+  uploadProgress.value = 0
   errorMsg.value = ''
   results.value = []
   videoResults.value = []
 
   try {
-    // TODO: wire up real API once backend is ready
-    await new Promise(r => setTimeout(r, 1800))
+    // Step 1: 计算 hash
+    uploadStep.value = 'hashing'
+    const fileHash = await hashFile(selectedFile.value)
 
-    if (activeTab.value === 'image') {
-      results.value = [
-        { species: 'Felis_catus', confidence: 0.872 },
-        { species: 'Canis_familiaris', confidence: 0.081 },
-        { species: 'Vulpes_vulpes', confidence: 0.031 },
-      ]
+    // Step 2: 请求 presigned URL，检查是否重复
+    uploadStep.value = 'requesting'
+    const { uploadUrl, fileKey, exists } = await requestUploadUrl(
+      selectedFile.value.name,
+      selectedFile.value.type,
+      fileHash,
+    )
+
+    // Step 3: 上传到 S3（重复文件跳过）
+    if (exists) {
+      isDuplicate.value = true
     } else {
-      videoResults.value = [
-        {
-          timestamp: '0:03',
-          detections: [
-            { species: 'Macropus_giganteus', confidence: 0.941 },
-            { species: 'Wallabia_bicolor', confidence: 0.043 },
-          ],
-        },
-        {
-          timestamp: '0:11',
-          detections: [
-            { species: 'Macropus_giganteus', confidence: 0.887 },
-            { species: 'Sus_scrofa', confidence: 0.072 },
-          ],
-        },
-        {
-          timestamp: '0:24',
-          detections: [
-            { species: 'Felis_catus', confidence: 0.763 },
-            { species: 'Macropus_giganteus', confidence: 0.191 },
-          ],
-        },
-      ]
+      uploadStep.value = 'uploading'
+      await uploadToS3(uploadUrl, selectedFile.value, (pct) => {
+        uploadProgress.value = pct
+      })
     }
+
+    // Step 4: 上传完成后轮询结果（后端由 S3 Event 自动触发检测）
+    uploadStep.value = 'analysing'
+    const data = await pollResults(fileKey)
+
+    if (activeTab.value === 'image') results.value = data
+    else videoResults.value = data
+
   } catch (e) {
-    errorMsg.value = 'Upload failed. Please try again.'
+    errorMsg.value = e.message || 'Upload failed. Please try again.'
   } finally {
     uploading.value = false
+    uploadStep.value = ''
   }
 }
 
@@ -532,6 +547,29 @@ h2 { margin: 0 0 8px; font-size: 22px; color: #1a1a2e; }
 .notice::before {
   content: '⚠';
   flex-shrink: 0;
+}
+
+.progress-wrap {
+  margin-top: 14px;
+  height: 8px;
+  background: #e8f0fe;
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+}
+.progress-bar {
+  height: 100%;
+  background: #4a90e2;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+.progress-label {
+  font-size: 11px;
+  color: #4a90e2;
+  font-weight: 600;
+  margin-top: 4px;
+  display: block;
+  text-align: right;
 }
 
 .error { color: #e74c3c; font-size: 13px; margin-top: 10px; }

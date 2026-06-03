@@ -1,18 +1,15 @@
-const ALLOWED_TYPES = {
-  image: {
-    mimes: ['image/jpeg', 'image/png'],
-    exts: ['.jpg', '.jpeg', '.png'],
-  },
-  video: {
-    mimes: ['video/mp4', 'video/quicktime', 'video/x-msvideo', 'video/webm'],
-    exts: ['.mp4', '.mov', '.avi', '.webm'],
-  },
+const ALLOWED_IMAGE = {
+  mimes: ['image/jpeg', 'image/png'],
+  exts: ['.jpg', '.jpeg', '.png'],
 }
 
-export function validateFile(file, type) {
-  const allowed = ALLOWED_TYPES[type]
-  const ext = '.' + file.name.split('.').pop().toLowerCase()
+const ALLOWED_VIDEO = {
+  mimes: ['video/mp4', 'video/quicktime', 'video/x-msvideo', 'video/webm'],
+  exts: ['.mp4', '.mov', '.avi', '.webm'],
+}
 
+function check(file, allowed) {
+  const ext = '.' + file.name.split('.').pop().toLowerCase()
   if (!allowed.mimes.includes(file.type)) {
     return `Unsupported format "${file.type}". Allowed: ${allowed.exts.join(', ')}`
   }
@@ -20,4 +17,12 @@ export function validateFile(file, type) {
     return `Unsupported extension "${ext}". Allowed: ${allowed.exts.join(', ')}`
   }
   return null
+}
+
+export function validateImage(file) {
+  return check(file, ALLOWED_IMAGE)
+}
+
+export function validateVideo(file) {
+  return check(file, ALLOWED_VIDEO)
 }
