@@ -117,9 +117,9 @@ import {
   getSubscriptions,
   subscribe,
   unsubscribe,
+  getAllTags,
   isUsingMockSubscription,
 } from '../api/subscription'
-import { queryDetections } from '../api/query'
 
 const userName = localStorage.getItem('user_name') || localStorage.getItem('user_email') || 'User'
 const userEmail = localStorage.getItem('user_email') || ''
@@ -166,14 +166,7 @@ async function loadSubscriptions() {
 async function loadAvailableTags() {
   tagsLoading.value = true
   try {
-    const records = await queryDetections({ type: 'all' })
-    const tagSet = new Set()
-    for (const record of records) {
-      for (const tag of record.tags) {
-        if (tag) tagSet.add(tag.toLowerCase())
-      }
-    }
-    availableTags.value = Array.from(tagSet).sort()
+    availableTags.value = await getAllTags()
   } catch {
     // silently fall back — chips are optional
   } finally {

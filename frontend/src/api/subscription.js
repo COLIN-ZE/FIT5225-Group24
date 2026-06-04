@@ -2,8 +2,11 @@ import { authHeaders, BASE_URL } from './http'
 import { getUserId } from './auth'
 
 const SUB_PATH = '/subscriptions'
+const TAGS_PATH = '/tags'
 const SUBSCRIPTION_BASE_URL = import.meta.env.VITE_QUERY_API_URL || BASE_URL
 const USE_MOCK = import.meta.env.VITE_USE_MOCK_QUERY !== 'false' || !SUBSCRIPTION_BASE_URL
+
+const MOCK_TAGS = ['bird', 'cassowary', 'dingo', 'invasive', 'koala', 'mammal', 'night', 'rainforest', 'wallaby']
 
 let mockSubscriptions = [
   { tag: 'koala', createdAt: '2026-06-01T08:00:00Z' },
@@ -25,6 +28,20 @@ async function request(path, options = {}) {
   if (!res.ok) throw new Error(`Subscription request failed (${res.status})`)
   const payload = await res.json()
   return payload.data ?? payload.subscriptions ?? payload
+}
+
+export async function getAllTags() {
+  if (USE_MOCK) {
+    await delay()
+    return [...MOCK_TAGS]
+  }
+  const res = await fetch(`${SUBSCRIPTION_BASE_URL}${TAGS_PATH}`, {
+    headers: authHeaders(),
+  })
+  if (!res.ok) throw new Error(`Failed to load tags (${res.status})`)
+  const payload = await res.json()
+  const tags = payload.tags ?? payload.data ?? payload
+  return Array.isArray(tags) ? tags.map(t => String(t).toLowerCase()).sort() : []
 }
 
 export async function getSubscriptions() {
