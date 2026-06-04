@@ -3,8 +3,9 @@ import { getToken } from './auth'
 export const BASE_URL = import.meta.env.VITE_API_URL
 
 export function authHeaders() {
+  const token = getToken()
   return {
-    'Authorization': `Bearer ${getToken()}`,
+    'Authorization': token ? `Bearer ${token}` : '',
     'Content-Type': 'application/json',
   }
 }

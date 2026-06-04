@@ -195,6 +195,25 @@ function parseTags(text) {
   return text.split(',').map(tag => tag.trim()).filter(Boolean)
 }
 
+function normaliseTag(tag) {
+  return String(tag || '').trim().toLowerCase()
+}
+
+function uniqueTags(tags) {
+  const seen = new Set()
+  return tags.filter(tag => {
+    const key = normaliseTag(tag)
+    if (!key || seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+function findExistingTags(record, tags) {
+  const existing = new Set((record.tags || []).map(normaliseTag))
+  return uniqueTags(tags).filter(tag => existing.has(normaliseTag(tag)))
+}
+
 function applyTagsLocally(fileIds, tags) {
   results.value = results.value.map(record => {
     if (!fileIds.includes(record.fileId)) return record
@@ -243,11 +262,20 @@ function clearSelection() {
 async function handleAddTags(record, tags) {
   errorMsg.value = ''
   message.value = ''
+  const cleanTags = uniqueTags(tags)
+  const existingTags = findExistingTags(record, cleanTags)
+
+  if (!cleanTags.length) return
+
+  if (existingTags.length) {
+    errorMsg.value = `Tag already exists on this file: ${existingTags.join(', ')}.`
+    return
+  }
 
   try {
-    await addTags(record.fileId, tags)
-    applyTagsLocally([record.fileId], tags)
-    message.value = `Added ${tags.length} tag${tags.length === 1 ? '' : 's'} to ${record.fileName}.`
+    await addTags(record.fileId, cleanTags)
+    applyTagsLocally([record.fileId], cleanTags)
+    message.value = `Added ${cleanTags.length} tag${cleanTags.length === 1 ? '' : 's'} to ${record.fileName}.`
   } catch (e) {
     errorMsg.value = e.message || 'Failed to add tags.'
   }
