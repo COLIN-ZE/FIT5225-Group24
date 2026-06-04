@@ -1,4 +1,15 @@
 AussieEcoLense/
+.DS_Store
+
+# Lambda local dev
+lambda/**/.venv/
+lambda/**/dist/
+lambda/**/build/
+lambda/process_upload/output/
+**/__pycache__/
+*.pyc
+.env
+.env.local
 *.pt
 *.pth
 *.onnx
