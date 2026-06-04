@@ -1,25 +1,40 @@
 import json
 import os
+from urllib import request as urlrequest
+from urllib.error import HTTPError, URLError
 from datetime import date, datetime
 
 from google.cloud import firestore
 
 
-COLLECTION_NAME = os.getenv("DETECTIONS_COLLECTION", "detections")
+COLLECTION_NAME = os.getenv("DETECTIONS_COLLECTION", "media")
+SUBSCRIPTIONS_COLLECTION = os.getenv("SUBSCRIPTIONS_COLLECTION", "subscriptions")
 ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "*")
+MEDIA_DELETE_URL = os.getenv("MEDIA_DELETE_URL", "")
+MEDIA_DELETE_SHARED_SECRET = os.getenv("MEDIA_DELETE_SHARED_SECRET", "")
 
 FIELD_FILE_ID = os.getenv("FIELD_FILE_ID", "file_id")
-FIELD_FILE_NAME = os.getenv("FIELD_FILE_NAME", "file_name")
 FIELD_FILE_KEY = os.getenv("FIELD_FILE_KEY", "file_key")
-FIELD_IMAGE_URL = os.getenv("FIELD_IMAGE_URL", "image_url")
+FIELD_USER_ID = os.getenv("FIELD_USER_ID", "user_id")
+FIELD_FILE_TYPE = os.getenv("FIELD_FILE_TYPE", "file_type")
+FIELD_FILE_URL = os.getenv("FIELD_FILE_URL", "file_url")
 FIELD_THUMBNAIL_URL = os.getenv("FIELD_THUMBNAIL_URL", "thumbnail_url")
-FIELD_THUMBNAIL_KEY = os.getenv("FIELD_THUMBNAIL_KEY", "thumbnail_key")
-FIELD_SPECIES = os.getenv("FIELD_SPECIES", "species")
-FIELD_COMMON_NAME = os.getenv("FIELD_COMMON_NAME", "common_name")
-FIELD_CONFIDENCE = os.getenv("FIELD_CONFIDENCE", "confidence")
-FIELD_COUNT = os.getenv("FIELD_COUNT", "count")
 FIELD_TAGS = os.getenv("FIELD_TAGS", "tags")
+FIELD_AUTO_TAGS = os.getenv("FIELD_AUTO_TAGS", "auto_tags")
+FIELD_MANUAL_TAGS = os.getenv("FIELD_MANUAL_TAGS", "manual_tags")
+FIELD_ALL_TAGS = os.getenv("FIELD_ALL_TAGS", "all_tags")
+FIELD_DETECTIONS = os.getenv("FIELD_DETECTIONS", "detections")
+FIELD_AI_READY_URIS = os.getenv("FIELD_AI_READY_URIS", "ai_ready_uris")
+FIELD_STATUS = os.getenv("FIELD_STATUS", "status")
 FIELD_CREATED_AT = os.getenv("FIELD_CREATED_AT", "created_at")
+FIELD_UPDATED_AT = os.getenv("FIELD_UPDATED_AT", "updated_at")
+
+FIELD_SUB_USER_ID = os.getenv("FIELD_SUB_USER_ID", "user_id")
+FIELD_SUB_EMAIL = os.getenv("FIELD_SUB_EMAIL", "email")
+FIELD_SUB_TAGS = os.getenv("FIELD_SUB_TAGS", "tags")
+FIELD_SUB_STATUS = os.getenv("FIELD_SUB_STATUS", "status")
+FIELD_SUB_CREATED_AT = os.getenv("FIELD_SUB_CREATED_AT", "created_at")
+FIELD_SUB_UPDATED_AT = os.getenv("FIELD_SUB_UPDATED_AT", "updated_at")
 
 
 db = firestore.Client()
@@ -46,6 +61,19 @@ def query_api(request):
         if request.method == "DELETE" and path.startswith("/files/"):
             file_id = path.removeprefix("/files/").strip("/")
             return _response(_delete_file(file_id))
+
+        if path == "/subscriptions":
+            user_id = _current_user_id(request)
+            if request.method == "GET":
+                return _response({"data": _get_subscriptions(user_id)})
+            if request.method == "POST":
+                body = _json_body(request)
+                return _response(_subscribe(user_id, body.get("email"), body.get("tag")))
+
+        if request.method == "DELETE" and path.startswith("/subscriptions/"):
+            user_id = _current_user_id(request)
+            tag = path.removeprefix("/subscriptions/").strip("/")
+            return _response(_unsubscribe(user_id, tag))
 
         return _response({"message": "Not found"}, 404)
     except ValueError as exc:
@@ -91,13 +119,17 @@ def _collection():
     return db.collection(COLLECTION_NAME)
 
 
+def _subscriptions_collection():
+    return db.collection(SUBSCRIPTIONS_COLLECTION)
+
+
 def _query_records(args):
     query_type = (args.get("type") or "all").lower()
     value = (args.get("value") or "").strip().lower()
     min_count = _optional_int(args.get("minCount"))
     max_count = _optional_int(args.get("maxCount"))
 
-    docs = _collection().stream()
+    docs = _collection().where(FIELD_STATUS, "==", "processed").stream()
     records = [_normalise_record(doc.id, doc.to_dict() or {}) for doc in docs]
 
     if query_type == "all" or not value and query_type != "count":
@@ -118,20 +150,19 @@ def _query_records(args):
     if query_type == "count":
         return [
             record for record in records
-            if (min_count is None or record["count"] >= min_count)
-            and (max_count is None or record["count"] <= max_count)
+            if _count_matches(record, value, min_count, max_count)
         ]
 
     if query_type == "thumbnail":
         return [
             record for record in records
-            if value in f"{record['thumbnailUrl']} {record.get('thumbnailKey', '')} {record['fileId']}".lower()
+            if record["thumbnailUrl"].lower() == value or value in record["fileId"].lower()
         ]
 
     if query_type == "file":
         return [
             record for record in records
-            if value in f"{record['fileName']} {record['fileKey']} {record['fileId']}".lower()
+            if value in f"{record['fileName']} {record['fileKey']} {record['fileId']} {record['imageUrl']}".lower()
         ]
 
     raise ValueError(f"Unsupported query type: {query_type}")
@@ -145,24 +176,69 @@ def _optional_int(value):
 
 def _normalise_record(doc_id, data):
     file_id = data.get(FIELD_FILE_ID) or doc_id
-    tags = data.get(FIELD_TAGS) or []
-    if not isinstance(tags, list):
-        tags = []
+    tag_counts = data.get(FIELD_TAGS) or {}
+    if not isinstance(tag_counts, dict):
+        tag_counts = {}
+
+    all_tags = data.get(FIELD_ALL_TAGS) or []
+    if not isinstance(all_tags, list):
+        all_tags = []
+
+    detections = data.get(FIELD_DETECTIONS) or []
+    if not isinstance(detections, list):
+        detections = []
+
+    primary = _primary_detection(detections)
+    species = primary.get("scientific_name") or primary.get("species") or (all_tags[0] if all_tags else "")
+    common_name = primary.get("species") or species
+    confidence = primary.get("classification_confidence") or primary.get("detection_confidence") or 0
 
     return {
         "fileId": file_id,
-        "fileName": data.get(FIELD_FILE_NAME) or data.get("filename") or "",
+        "fileName": _filename_from_key(data.get(FIELD_FILE_KEY) or data.get(FIELD_FILE_URL) or file_id),
         "fileKey": data.get(FIELD_FILE_KEY) or "",
-        "imageUrl": data.get(FIELD_IMAGE_URL) or data.get("file_url") or "",
-        "thumbnailUrl": data.get(FIELD_THUMBNAIL_URL) or data.get("thumb_url") or "",
-        "thumbnailKey": data.get(FIELD_THUMBNAIL_KEY) or "",
-        "species": data.get(FIELD_SPECIES) or "",
-        "commonName": data.get(FIELD_COMMON_NAME) or "",
-        "confidence": float(data.get(FIELD_CONFIDENCE) or 0),
-        "count": int(data.get(FIELD_COUNT) or 0),
-        "tags": tags,
-        "uploadedAt": data.get(FIELD_CREATED_AT) or data.get("uploaded_at") or "",
+        "imageUrl": data.get(FIELD_FILE_URL) or "",
+        "thumbnailUrl": data.get(FIELD_THUMBNAIL_URL) or "",
+        "species": _display_species(species),
+        "commonName": _display_species(common_name),
+        "confidence": float(confidence or 0),
+        "count": int(sum(int(value or 0) for value in tag_counts.values())),
+        "tags": sorted({str(tag) for tag in all_tags}),
+        "tagCounts": tag_counts,
+        "detections": detections,
+        "aiReadyUris": data.get(FIELD_AI_READY_URIS) or [],
+        "fileType": data.get(FIELD_FILE_TYPE) or "",
+        "uploadedAt": data.get(FIELD_CREATED_AT) or "",
     }
+
+
+def _count_matches(record, tag, min_count, max_count):
+    if tag:
+        count = int(record.get("tagCounts", {}).get(tag, 0))
+    else:
+        count = record["count"]
+    return (min_count is None or count >= min_count) and (max_count is None or count <= max_count)
+
+
+def _primary_detection(detections):
+    if not detections:
+        return {}
+    return max(
+        (det for det in detections if isinstance(det, dict)),
+        key=lambda det: det.get("classification_confidence") or det.get("detection_confidence") or 0,
+        default={},
+    )
+
+
+def _display_species(value):
+    return str(value or "").replace("_", " ")
+
+
+def _filename_from_key(value):
+    value = str(value or "")
+    if not value:
+        return ""
+    return value.rstrip("/").split("/")[-1]
 
 
 def _get_doc_ref(file_id):
@@ -192,7 +268,7 @@ def _add_tags(file_id, tags):
         raise ValueError("At least one tag is required")
 
     doc_ref = _get_doc_ref(file_id)
-    doc_ref.update({FIELD_TAGS: firestore.ArrayUnion(clean_tags)})
+    _update_manual_tags(doc_ref, clean_tags)
     return {"fileId": file_id, "tags": clean_tags}
 
 
@@ -206,13 +282,27 @@ def _add_tags_batch(file_ids, tags):
 
     batch = db.batch()
     for file_id in file_ids:
-        batch.update(_get_doc_ref(file_id), {FIELD_TAGS: firestore.ArrayUnion(clean_tags)})
+        doc_ref = _get_doc_ref(file_id)
+        snapshot = doc_ref.get()
+        data = snapshot.to_dict() or {}
+        manual_tags = _merged_tags(data.get(FIELD_MANUAL_TAGS), clean_tags)
+        all_tags = _merged_tags(data.get(FIELD_ALL_TAGS), clean_tags)
+        tag_counts = _merged_tag_counts(data.get(FIELD_TAGS), clean_tags)
+        batch.update(doc_ref, {
+            FIELD_TAGS: tag_counts,
+            FIELD_MANUAL_TAGS: manual_tags,
+            FIELD_ALL_TAGS: all_tags,
+            FIELD_UPDATED_AT: firestore.SERVER_TIMESTAMP,
+        })
     batch.commit()
 
     return {"fileIds": file_ids, "tags": clean_tags}
 
 
 def _delete_file(file_id):
+    if MEDIA_DELETE_URL:
+        return _delegate_delete_file(file_id)
+
     doc_ref = _get_doc_ref(file_id)
     snapshot = doc_ref.get()
     data = snapshot.to_dict() or {}
@@ -227,7 +317,6 @@ def _delete_s3_objects(data):
     bucket = os.getenv("AWS_S3_BUCKET")
     keys = [
         data.get(FIELD_FILE_KEY),
-        data.get(FIELD_THUMBNAIL_KEY),
     ]
     keys = [key for key in keys if key]
 
@@ -247,3 +336,131 @@ def _delete_s3_objects(data):
     )
     for key in keys:
         s3.delete_object(Bucket=bucket, Key=key)
+
+
+def _update_manual_tags(doc_ref, tags):
+    snapshot = doc_ref.get()
+    data = snapshot.to_dict() or {}
+    doc_ref.update({
+        FIELD_TAGS: _merged_tag_counts(data.get(FIELD_TAGS), tags),
+        FIELD_MANUAL_TAGS: _merged_tags(data.get(FIELD_MANUAL_TAGS), tags),
+        FIELD_ALL_TAGS: _merged_tags(data.get(FIELD_ALL_TAGS), tags),
+        FIELD_UPDATED_AT: firestore.SERVER_TIMESTAMP,
+    })
+
+
+def _merged_tags(existing, additions):
+    existing = existing if isinstance(existing, list) else []
+    return sorted({str(tag).strip().lower() for tag in [*existing, *additions] if str(tag).strip()})
+
+
+def _merged_tag_counts(existing, additions):
+    counts = existing if isinstance(existing, dict) else {}
+    merged = {str(key).strip().lower(): int(value or 0) for key, value in counts.items() if str(key).strip()}
+    for tag in additions:
+        clean = str(tag).strip().lower()
+        if clean and clean not in merged:
+            merged[clean] = 1
+    return merged
+
+
+def _delegate_delete_file(file_id):
+    doc_ref = _get_doc_ref(file_id)
+    snapshot = doc_ref.get()
+    data = snapshot.to_dict() or {}
+    urls = _delete_urls(data)
+    if not urls:
+        raise ValueError(f"No deletable URLs found for file: {file_id}")
+
+    payload = json.dumps({"urls": urls}).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    if MEDIA_DELETE_SHARED_SECRET:
+        headers["X-Shared-Secret"] = MEDIA_DELETE_SHARED_SECRET
+
+    req = urlrequest.Request(MEDIA_DELETE_URL, data=payload, headers=headers, method="POST")
+    try:
+        with urlrequest.urlopen(req, timeout=30) as res:
+            body = res.read().decode("utf-8")
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8")
+        raise ValueError(f"Delete endpoint failed ({exc.code}): {detail}") from exc
+    except URLError as exc:
+        raise ValueError(f"Delete endpoint unavailable: {exc.reason}") from exc
+
+    if not body:
+        return {"fileId": file_id, "deleted": True}
+    try:
+        return json.loads(body)
+    except json.JSONDecodeError:
+        return {"fileId": file_id, "deleted": True, "message": body}
+
+
+def _delete_urls(data):
+    values = [
+        data.get(FIELD_FILE_URL),
+        data.get(FIELD_THUMBNAIL_URL),
+        data.get(FIELD_FILE_KEY),
+        *(data.get(FIELD_AI_READY_URIS) or []),
+    ]
+    return sorted({str(value).strip() for value in values if str(value).strip()})
+
+
+def _current_user_id(request):
+    body = _json_body(request) if request.method in ("POST", "DELETE") else {}
+    user_id = request.args.get("userId") or body.get("userId") or request.headers.get("X-User-Id")
+    if not user_id:
+        user_id = "demo_user"
+    return user_id
+
+
+def _subscription_doc_id(user_id):
+    return str(user_id).replace("/", "_")
+
+
+def _get_subscriptions(user_id):
+    snapshot = _subscriptions_collection().document(_subscription_doc_id(user_id)).get()
+    if not snapshot.exists:
+        return []
+    data = snapshot.to_dict() or {}
+    tags = data.get(FIELD_SUB_TAGS) or []
+    created_at = data.get(FIELD_SUB_CREATED_AT)
+    return [{"tag": tag, "createdAt": created_at} for tag in sorted(tags)]
+
+
+def _subscribe(user_id, email, tag):
+    clean_tag = str(tag or "").strip().lower()
+    if not clean_tag:
+        raise ValueError("tag is required")
+
+    doc_ref = _subscriptions_collection().document(_subscription_doc_id(user_id))
+    snapshot = doc_ref.get()
+    if snapshot.exists:
+        doc_ref.update({
+            FIELD_SUB_EMAIL: email,
+            FIELD_SUB_TAGS: firestore.ArrayUnion([clean_tag]),
+            FIELD_SUB_STATUS: "active",
+            FIELD_SUB_UPDATED_AT: firestore.SERVER_TIMESTAMP,
+        })
+    else:
+        doc_ref.set({
+            FIELD_SUB_USER_ID: user_id,
+            FIELD_SUB_EMAIL: email,
+            FIELD_SUB_TAGS: [clean_tag],
+            FIELD_SUB_STATUS: "active",
+            FIELD_SUB_CREATED_AT: firestore.SERVER_TIMESTAMP,
+            FIELD_SUB_UPDATED_AT: firestore.SERVER_TIMESTAMP,
+        })
+    return {"tag": clean_tag, "createdAt": datetime.utcnow().isoformat()}
+
+
+def _unsubscribe(user_id, tag):
+    clean_tag = str(tag or "").strip().lower()
+    if not clean_tag:
+        raise ValueError("tag is required")
+
+    doc_ref = _subscriptions_collection().document(_subscription_doc_id(user_id))
+    doc_ref.update({
+        FIELD_SUB_TAGS: firestore.ArrayRemove([clean_tag]),
+        FIELD_SUB_UPDATED_AT: firestore.SERVER_TIMESTAMP,
+    })
+    return {"tag": clean_tag, "deleted": True}

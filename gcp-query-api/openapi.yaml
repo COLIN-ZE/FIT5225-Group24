@@ -1,0 +1,234 @@
+swagger: "2.0"
+info:
+  title: aussie-ecolense-query-api
+  description: API Gateway contract for the member D query Cloud Function.
+  version: "1.0.0"
+
+schemes:
+  - https
+produces:
+  - application/json
+consumes:
+  - application/json
+
+# Replace this with the hostname of the deployed API Gateway, for example:
+# query-api-gateway-abc123.ts.gateway.dev
+host: GATEWAY_HOST
+
+paths:
+  /query:
+    options:
+      operationId: optionsQueryMedia
+      x-google-backend:
+        address: QUERY_FUNCTION_URL
+        path_translation: APPEND_PATH_TO_ADDRESS
+      responses:
+        "204":
+          description: CORS preflight.
+
+    get:
+      operationId: queryMedia
+      x-google-backend:
+        address: QUERY_FUNCTION_URL
+        path_translation: APPEND_PATH_TO_ADDRESS
+      parameters:
+        - name: type
+          in: query
+          type: string
+          required: false
+        - name: value
+          in: query
+          type: string
+          required: false
+        - name: minCount
+          in: query
+          type: integer
+          required: false
+        - name: maxCount
+          in: query
+          type: integer
+          required: false
+      responses:
+        "200":
+          description: Query results.
+
+  /files/{fileId}/tags:
+    options:
+      operationId: optionsFileTags
+      x-google-backend:
+        address: QUERY_FUNCTION_URL
+        path_translation: APPEND_PATH_TO_ADDRESS
+      parameters:
+        - name: fileId
+          in: path
+          type: string
+          required: true
+      responses:
+        "204":
+          description: CORS preflight.
+
+    post:
+      operationId: addFileTags
+      x-google-backend:
+        address: QUERY_FUNCTION_URL
+        path_translation: APPEND_PATH_TO_ADDRESS
+      parameters:
+        - name: fileId
+          in: path
+          type: string
+          required: true
+        - name: body
+          in: body
+          required: true
+          schema:
+            type: object
+            properties:
+              tags:
+                type: array
+                items:
+                  type: string
+      responses:
+        "200":
+          description: Tags added.
+
+  /files/tags:batchAdd:
+    options:
+      operationId: optionsFileTagsBatch
+      x-google-backend:
+        address: QUERY_FUNCTION_URL
+        path_translation: APPEND_PATH_TO_ADDRESS
+      responses:
+        "204":
+          description: CORS preflight.
+
+    post:
+      operationId: addFileTagsBatch
+      x-google-backend:
+        address: QUERY_FUNCTION_URL
+        path_translation: APPEND_PATH_TO_ADDRESS
+      parameters:
+        - name: body
+          in: body
+          required: true
+          schema:
+            type: object
+            properties:
+              fileIds:
+                type: array
+                items:
+                  type: string
+              tags:
+                type: array
+                items:
+                  type: string
+      responses:
+        "200":
+          description: Batch tags added.
+
+  /files/{fileId}:
+    options:
+      operationId: optionsMediaFile
+      x-google-backend:
+        address: QUERY_FUNCTION_URL
+        path_translation: APPEND_PATH_TO_ADDRESS
+      parameters:
+        - name: fileId
+          in: path
+          type: string
+          required: true
+      responses:
+        "204":
+          description: CORS preflight.
+
+    delete:
+      operationId: deleteMediaFile
+      x-google-backend:
+        address: QUERY_FUNCTION_URL
+        path_translation: APPEND_PATH_TO_ADDRESS
+      parameters:
+        - name: fileId
+          in: path
+          type: string
+          required: true
+      responses:
+        "200":
+          description: File deleted.
+
+  /subscriptions:
+    options:
+      operationId: optionsSubscriptions
+      x-google-backend:
+        address: QUERY_FUNCTION_URL
+        path_translation: APPEND_PATH_TO_ADDRESS
+      responses:
+        "204":
+          description: CORS preflight.
+
+    get:
+      operationId: listSubscriptions
+      x-google-backend:
+        address: QUERY_FUNCTION_URL
+        path_translation: APPEND_PATH_TO_ADDRESS
+      parameters:
+        - name: userId
+          in: query
+          type: string
+          required: false
+      responses:
+        "200":
+          description: Subscription list.
+
+    post:
+      operationId: createSubscription
+      x-google-backend:
+        address: QUERY_FUNCTION_URL
+        path_translation: APPEND_PATH_TO_ADDRESS
+      parameters:
+        - name: body
+          in: body
+          required: true
+          schema:
+            type: object
+            properties:
+              userId:
+                type: string
+              email:
+                type: string
+              tag:
+                type: string
+      responses:
+        "200":
+          description: Subscription created.
+
+  /subscriptions/{tag}:
+    options:
+      operationId: optionsSubscriptionTag
+      x-google-backend:
+        address: QUERY_FUNCTION_URL
+        path_translation: APPEND_PATH_TO_ADDRESS
+      parameters:
+        - name: tag
+          in: path
+          type: string
+          required: true
+      responses:
+        "204":
+          description: CORS preflight.
+
+    delete:
+      operationId: deleteSubscription
+      x-google-backend:
+        address: QUERY_FUNCTION_URL
+        path_translation: APPEND_PATH_TO_ADDRESS
+      parameters:
+        - name: tag
+          in: path
+          type: string
+          required: true
+        - name: userId
+          in: query
+          type: string
+          required: false
+      responses:
+        "200":
+          description: Subscription deleted.

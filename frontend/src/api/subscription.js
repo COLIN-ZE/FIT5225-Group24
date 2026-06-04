@@ -1,7 +1,8 @@
 import { authHeaders, BASE_URL } from './http'
 
 const SUB_PATH = '/subscriptions'
-const USE_MOCK = import.meta.env.VITE_USE_MOCK_QUERY !== 'false' || !BASE_URL
+const SUBSCRIPTION_BASE_URL = import.meta.env.VITE_QUERY_API_URL || BASE_URL
+const USE_MOCK = import.meta.env.VITE_USE_MOCK_QUERY !== 'false' || !SUBSCRIPTION_BASE_URL
 
 let mockSubscriptions = [
   { tag: 'koala', createdAt: '2026-06-01T08:00:00Z' },
@@ -13,7 +14,7 @@ function delay(ms = 350) {
 }
 
 async function request(path, options = {}) {
-  const res = await fetch(`${BASE_URL}${path}`, {
+  const res = await fetch(`${SUBSCRIPTION_BASE_URL}${path}`, {
     ...options,
     headers: {
       ...authHeaders(),
@@ -30,7 +31,8 @@ export async function getSubscriptions() {
     await delay()
     return [...mockSubscriptions]
   }
-  const data = await request(SUB_PATH)
+  const userId = encodeURIComponent(localStorage.getItem('user_email') || 'demo_user')
+  const data = await request(`${SUB_PATH}?userId=${userId}`)
   return Array.isArray(data) ? data : []
 }
 
@@ -48,7 +50,11 @@ export async function subscribe(tag) {
   }
   return request(SUB_PATH, {
     method: 'POST',
-    body: JSON.stringify({ tag: clean }),
+    body: JSON.stringify({
+      tag: clean,
+      userId: localStorage.getItem('user_email') || 'demo_user',
+      email: localStorage.getItem('user_email') || null,
+    }),
   })
 }
 
@@ -58,7 +64,8 @@ export async function unsubscribe(tag) {
     mockSubscriptions = mockSubscriptions.filter(s => s.tag !== tag)
     return { tag, deleted: true }
   }
-  return request(`${SUB_PATH}/${encodeURIComponent(tag)}`, { method: 'DELETE' })
+  const userId = encodeURIComponent(localStorage.getItem('user_email') || 'demo_user')
+  return request(`${SUB_PATH}/${encodeURIComponent(tag)}?userId=${userId}`, { method: 'DELETE' })
 }
 
 export function isUsingMockSubscription() {
