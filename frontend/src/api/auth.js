@@ -41,6 +41,9 @@ export function login(email, password) {
       onSuccess(session) {
         localStorage.setItem('id_token', session.getIdToken().getJwtToken())
         localStorage.setItem('user_email', email)
+        const payload = session.getIdToken().payload
+        const name = payload.given_name || payload.name || email
+        localStorage.setItem('user_name', name)
         resolve(session)
       },
       onFailure(err) {
@@ -55,6 +58,7 @@ export function logout() {
   if (user) user.signOut()
   localStorage.removeItem('id_token')
   localStorage.removeItem('user_email')
+  localStorage.removeItem('user_name')
 }
 
 export function getToken() {

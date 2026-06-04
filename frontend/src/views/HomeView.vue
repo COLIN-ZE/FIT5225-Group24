@@ -5,6 +5,7 @@
       <div class="nav-links">
         <router-link to="/home">Upload</router-link>
         <router-link to="/query">Query</router-link>
+        <router-link to="/subscription">Subscriptions</router-link>
       </div>
       <span class="nav-user">Welcome, {{ userEmail }}</span>
       <button class="btn-logout" @click="handleLogout">Logout</button>
@@ -173,7 +174,7 @@ import { useRouter } from 'vue-router'
 import { logout } from '../api/auth'
 import { validateImage, validateVideo } from '../utils/validate'
 import { hashFile } from '../utils/hash'
-import { requestUploadUrl, uploadToS3, pollResults } from '../api/upload'
+import { requestUploadUrl, uploadToS3 /*, pollResults */ } from '../api/upload'
 
 const userEmail = localStorage.getItem('user_name') || localStorage.getItem('user_email') || 'User'
 const router = useRouter()
@@ -297,11 +298,10 @@ async function handleUpload() {
         uploadProgress.value = pct
       })
     }  
-    uploadStep.value = 'analysing'
-    const data = await pollResults(fileKey)
-
-    if (activeTab.value === 'image') results.value = data
-    else videoResults.value = data
+    // uploadStep.value = 'analysing'
+    // const data = await pollResults(fileKey)
+    // if (activeTab.value === 'image') results.value = data
+    // else videoResults.value = data
 
   } catch (e) {
     errorMsg.value = e.message || 'Upload failed. Please try again.'

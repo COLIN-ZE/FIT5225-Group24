@@ -5,6 +5,7 @@ import RegisterView from '../views/RegisterView.vue'
 import VerifyView from '../views/VerifyView.vue'
 import HomeView from '../views/HomeView.vue'
 import QueryView from '../views/QueryView.vue'
+import SubscriptionView from '../views/SubscriptionView.vue'
 
 const routes = [
   { path: '/', redirect: '/home' },
@@ -13,6 +14,7 @@ const routes = [
   { path: '/verify', component: VerifyView },
   { path: '/home', component: HomeView, meta: { requiresAuth: true } },
   { path: '/query', component: QueryView, meta: { requiresAuth: true } },
+  { path: '/subscription', component: SubscriptionView, meta: { requiresAuth: true } },
 ]
 
 const router = createRouter({

@@ -5,6 +5,7 @@
       <div class="nav-links">
         <router-link to="/home">Upload</router-link>
         <router-link to="/query">Query</router-link>
+        <router-link to="/subscription">Subscriptions</router-link>
       </div>
       <span class="nav-user">Welcome, {{ userEmail }}</span>
       <button class="btn-logout" @click="handleLogout">Logout</button>

@@ -31,6 +31,8 @@ export function uploadToS3(uploadUrl, file, onProgress) {
   })
 }
 
+
+//TODO 查firestore
 export async function pollResults(fileKey, maxWaitMs = 60000) {
   const interval = 2000
   const maxTries = maxWaitMs / interval
