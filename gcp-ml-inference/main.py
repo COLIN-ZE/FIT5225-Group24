@@ -1,5 +1,8 @@
+import gc
 import hashlib
+import math
 import os
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -176,15 +179,21 @@ def delete_s3_url_if_possible(url):
     return True
 
 
-def run_megadetector(image_path):
+def run_megadetector_batch(image_paths):
     from megadetector.detection.run_detector_batch import load_and_run_detector_batch
 
     ensure_model_files()
-    return load_and_run_detector_batch(
-        image_file_names=[str(image_path)],
+
+    results = load_and_run_detector_batch(
+        image_file_names=[str(path) for path in image_paths],
         model_file=str(MD_MODEL_PATH),
+        image_size=640,
+        batch_size=1,
+        n_cores=1,
     )
 
+    gc.collect()
+    return results
 
 def classify_crop(crop):
     import numpy as np
@@ -221,52 +230,61 @@ def classify_crop(crop):
     }
 
 
-def detect_species_from_image(image_path):
+def detect_species_from_images(image_paths, source_uris):
     from PIL import Image
 
-    md_results = run_megadetector(image_path)
-    if not md_results:
-        return {}, []
-
-    entry = md_results[0]
-    detections = entry.get("detections", [])
-
-    image = Image.open(image_path).convert("RGB")
-    width, height = image.size
+    md_results = run_megadetector_batch(image_paths)
 
     tags = {}
     classified_detections = []
 
-    for detection in detections:
-        if detection.get("category") != "1":
-            continue
+    for image_path, source_uri, entry in zip(
+        image_paths,
+        source_uris,
+        md_results,
+    ):
+        detections = entry.get("detections", [])
 
-        md_confidence = float(detection.get("conf", 0))
-        if md_confidence < 0.05:
-            continue
+        with Image.open(image_path) as opened_image:
+            image = opened_image.convert("RGB")
 
-        x, y, w, h = detection["bbox"]
-        left = int(x * width)
-        top = int(y * height)
-        right = int((x + w) * width)
-        bottom = int((y + h) * height)
+        width, height = image.size
 
-        crop = image.crop((left, top, right, bottom)).resize((600, 600))
-        result = classify_crop(crop)
+        for detection in detections:
+            if detection.get("category") != "1":
+                continue
 
-        species = result["species"]
-        tags[species] = tags.get(species, 0) + 1
+            md_confidence = float(detection.get("conf", 0))
+            if md_confidence < 0.05:
+                continue
 
-        classified_detections.append({
-            "species": species,
-            "scientific_name": result["scientific_name"],
-            "classification_confidence": result["confidence"],
-            "detection_confidence": md_confidence,
-            "bbox": detection["bbox"],
-        })
+            x, y, w, h = detection["bbox"]
+
+            left = int(x * width)
+            top = int(y * height)
+            right = int((x + w) * width)
+            bottom = int((y + h) * height)
+
+            crop = image.crop((left, top, right, bottom)).resize((600, 600))
+            result = classify_crop(crop)
+            crop.close()
+
+            species = result["species"]
+            tags[species] = tags.get(species, 0) + 1
+
+            classified_detections.append({
+                "species": species,
+                "scientific_name": result["scientific_name"],
+                "classification_confidence": result["confidence"],
+                "detection_confidence": md_confidence,
+                "bbox": detection["bbox"],
+                "source_uri": source_uri,
+            })
+
+        image.close()
+        gc.collect()
 
     return tags, classified_detections
-
 
 def firestore_value(value):
     if value is None:
@@ -276,6 +294,8 @@ def firestore_value(value):
     if isinstance(value, int):
         return {"integerValue": str(value)}
     if isinstance(value, float):
+        if not math.isfinite(value):
+            return {"nullValue": None}
         return {"doubleValue": value}
     if isinstance(value, datetime):
         return {"timestampValue": value.isoformat().replace("+00:00", "Z")}
@@ -397,6 +417,7 @@ def notify_subscribers(tags, file_url, thumbnail_url):
 
     if SNS_TOPIC_ARN.endswith(".fifo"):
         publish_args["MessageGroupId"] = "ecolens-notifications"
+        publish_args["MessageDeduplicationId"] = str(uuid.uuid4())
 
     get_sns_client().publish(**publish_args)
 
@@ -439,22 +460,23 @@ def _handle_inference(request):
         file_type = "video" if len(ai_ready_uris) > 1 else "image"
 
     try:
-        tags = {}
-        all_detections = []
+        local_paths = []
 
         for index, uri in enumerate(ai_ready_uris):
             local_path = Path(f"/tmp/{file_id}_{index}.jpg")
             download_s3_file(uri, local_path)
+            local_paths.append(local_path)
 
-            image_tags, detections = detect_species_from_image(local_path)
+        # Load MegaDetector once for all image/video frames.
+        tags, all_detections = detect_species_from_images(
+            local_paths,
+            ai_ready_uris,
+        )
 
-            for tag, count in image_tags.items():
-                tags[tag] = tags.get(tag, 0) + count
+        for local_path in local_paths:
+            local_path.unlink(missing_ok=True)
 
-            for detection in detections:
-                detection["source_uri"] = uri
-
-            all_detections.extend(detections)
+        gc.collect()
 
         now = datetime.now(timezone.utc)
 
@@ -478,7 +500,11 @@ def _handle_inference(request):
         }
 
         write_document("media", file_id, document)
-        notify_subscribers(tags, file_url, thumbnail_url)
+
+        try:
+            notify_subscribers(tags, file_url, thumbnail_url)
+        except Exception as notification_error:
+            print(f"SNS notification failed: {notification_error}")
 
         return jsonify({
             "file_id": file_id,
