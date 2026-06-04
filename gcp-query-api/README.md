@@ -1,6 +1,12 @@
-# GCP Query API
+# Query API
 
-HTTP Cloud Function for member D, exposed through GCP API Gateway. The Vue frontend calls the API Gateway URL; the frontend does not call Firestore directly.
+HTTP Cloud Function for member D. In the final AWS-only integration, the Vue frontend calls A's AWS API Gateway, and AWS API Gateway forwards the protected requests to this Cloud Function.
+
+```text
+Vue frontend -> AWS API Gateway + Cognito JWT -> query-api Cloud Function -> Firestore
+```
+
+The frontend does not call Firestore directly, and in the final deployment it should not call this Cloud Function directly either.
 
 This version is aligned with member C's Firestore schema:
 
@@ -18,6 +24,8 @@ GET    /query?type=species&value=dingo
 GET    /query?type=count&value=dingo&minCount=2
 GET    /query?type=thumbnail&value=https://...
 GET    /query?type=file&value=uploads/example.jpg
+GET    /tags
+GET    /tags?includeCounts=true
 POST   /files/{fileId}/tags
 POST   /files/tags:batchAdd
 DELETE /files/{fileId}
@@ -26,11 +34,13 @@ POST   /subscriptions
 DELETE /subscriptions/{tag}?userId=user@example.com
 ```
 
-The API Gateway contract is defined in:
+The optional GCP API Gateway contract is defined in:
 
 ```text
 openapi.yaml
 ```
+
+That file is kept for internal GCP testing only. The assignment/demo entry point should be AWS API Gateway. See [AWS_GATEWAY.md](AWS_GATEWAY.md).
 
 The API only returns media documents where:
 
@@ -244,6 +254,7 @@ DELETE /subscriptions/dingo?userId=user@example.com
 ```text
 Simple species/tag query uses all_tags.
 Tag count query uses tags.<species>.
+All tags query deduplicates all_tags and tags map keys.
 Thumbnail reverse lookup uses thumbnail_url.
 Original image/video preview uses file_url.
 Video inference frames use ai_ready_uris.
@@ -275,7 +286,7 @@ VITE_USE_MOCK_QUERY=false
 
 ### 1. Deploy the Cloud Function Backend
 
-Deploy the backend function first. API Gateway forwards requests to this function.
+Deploy the backend function first. AWS API Gateway forwards requests to this function.
 
 ```bash
 gcloud functions deploy query-api \
@@ -295,7 +306,53 @@ Record the deployed function URL. It will look similar to:
 https://query-api-xxxxx.australia-southeast1.run.app
 ```
 
-### 2. Create an API Gateway Config
+### 2. Connect It Through AWS API Gateway
+
+Use A's AWS API Gateway as the public entry point:
+
+```text
+AWS API Gateway base URL -> https://australia-southeast1-fit5225-a2-aussie-ecolens.cloudfunctions.net/query-api
+```
+
+Create these AWS routes and attach the Cognito authorizer to each route:
+
+```text
+GET    /query
+GET    /tags
+POST   /files/{fileId}/tags
+POST   /files/tags:batchAdd
+DELETE /files/{fileId}
+GET    /subscriptions
+POST   /subscriptions
+DELETE /subscriptions/{tag}
+```
+
+The AWS integration must preserve the request path and query string, and should forward:
+
+```text
+Authorization
+Content-Type
+```
+
+For final hardening, set a private `GATEWAY_SHARED_SECRET` environment variable on this Cloud Function and configure AWS API Gateway to inject the same value as:
+
+```text
+X-Gateway-Secret: <secret>
+```
+
+Do not commit the real secret to GitHub.
+
+The frontend should then use:
+
+```env
+VITE_API_URL=https://YOUR_AWS_API_ID.execute-api.ap-southeast-2.amazonaws.com/dev
+VITE_QUERY_API_URL=
+VITE_USE_MOCK_QUERY=false
+```
+
+### 3. Optional GCP Gateway Testing
+
+This is not the final AWS-only path. Use it only if you need to debug the Cloud Function before connecting AWS.
 
 Copy `openapi.yaml` to a temporary file and replace:
 
@@ -320,7 +377,7 @@ gcloud api-gateway apis create query-api \
   --project=YOUR_GCP_PROJECT_ID
 ```
 
-### 3. Create or Update the Gateway
+### 4. Create or Update the Optional GCP Gateway
 
 ```bash
 gcloud api-gateway gateways create query-api-gateway \
@@ -345,19 +402,20 @@ VITE_QUERY_API_URL=https://YOUR_GATEWAY_HOST
 VITE_USE_MOCK_QUERY=false
 ```
 
-### 4. Gateway Requirement
+### 5. Gateway Requirement
 
-For the assignment requirement, the production frontend should use the API Gateway URL, not the direct Cloud Function URL.
+For the assignment requirement, the production frontend should use the AWS API Gateway URL, not the direct Cloud Function URL.
 
 ```text
-Vue frontend -> GCP API Gateway -> query-api Cloud Function -> Firestore
+Vue frontend -> AWS API Gateway -> query-api Cloud Function -> Firestore
 ```
 
-For internal integration, the gateway can temporarily be open while C's delete endpoint is protected by `X-Shared-Secret`. For final submission, API Gateway should validate the Cognito JWT so unauthenticated users cannot access protected endpoints.
+For internal integration, AWS Gateway can temporarily use the Cognito authorizer plus C's `X-Shared-Secret` for delete. For final submission, AWS Gateway should validate the Cognito JWT so unauthenticated users cannot access protected endpoints. `GATEWAY_SHARED_SECRET` can additionally prevent direct bypass of AWS Gateway.
 
 ## Remaining Integration Decisions
 
 ```text
-Whether API Gateway must validate the Cognito JWT or auth is handled elsewhere
-Final API Gateway hostname for VITE_QUERY_API_URL
+Final AWS API Gateway hostname for VITE_API_URL
+Final Cognito authorizer details from A
+Final GATEWAY_SHARED_SECRET value configured in both AWS Gateway and Cloud Function
 ```
