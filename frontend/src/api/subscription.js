@@ -1,4 +1,5 @@
 import { authHeaders, BASE_URL } from './http'
+import { getUserId } from './auth'
 
 const SUB_PATH = '/subscriptions'
 const SUBSCRIPTION_BASE_URL = import.meta.env.VITE_QUERY_API_URL || BASE_URL
@@ -31,8 +32,9 @@ export async function getSubscriptions() {
     await delay()
     return [...mockSubscriptions]
   }
-  const userId = encodeURIComponent(localStorage.getItem('user_email') || 'demo_user')
-  const data = await request(`${SUB_PATH}?userId=${userId}`)
+  const userId = encodeURIComponent(getUserId())
+  const email = encodeURIComponent(localStorage.getItem('user_email') || '')
+  const data = await request(`${SUB_PATH}?userId=${userId}&email=${email}`)
   return Array.isArray(data) ? data : []
 }
 
@@ -52,7 +54,7 @@ export async function subscribe(tag) {
     method: 'POST',
     body: JSON.stringify({
       tag: clean,
-      userId: localStorage.getItem('user_email') || 'demo_user',
+      userId: getUserId(),
       email: localStorage.getItem('user_email') || null,
     }),
   })
@@ -64,8 +66,9 @@ export async function unsubscribe(tag) {
     mockSubscriptions = mockSubscriptions.filter(s => s.tag !== tag)
     return { tag, deleted: true }
   }
-  const userId = encodeURIComponent(localStorage.getItem('user_email') || 'demo_user')
-  return request(`${SUB_PATH}/${encodeURIComponent(tag)}?userId=${userId}`, { method: 'DELETE' })
+  const userId = encodeURIComponent(getUserId())
+  const email = encodeURIComponent(localStorage.getItem('user_email') || '')
+  return request(`${SUB_PATH}/${encodeURIComponent(tag)}?userId=${userId}&email=${email}`, { method: 'DELETE' })
 }
 
 export function isUsingMockSubscription() {

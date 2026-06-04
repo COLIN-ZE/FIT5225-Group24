@@ -44,6 +44,7 @@ export function login(email, password) {
         const payload = session.getIdToken().payload
         const name = payload.given_name || payload.name || email
         localStorage.setItem('user_name', name)
+        localStorage.setItem('user_id', payload.sub || email)
         resolve(session)
       },
       onFailure(err) {
@@ -59,10 +60,15 @@ export function logout() {
   localStorage.removeItem('id_token')
   localStorage.removeItem('user_email')
   localStorage.removeItem('user_name')
+  localStorage.removeItem('user_id')
 }
 
 export function getToken() {
   return localStorage.getItem('id_token')
+}
+
+export function getUserId() {
+  return localStorage.getItem('user_id') || localStorage.getItem('user_email') || 'demo_user'
 }
 
 export function isLoggedIn() {
