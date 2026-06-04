@@ -12,6 +12,7 @@ SUBSCRIPTIONS_COLLECTION = os.getenv("SUBSCRIPTIONS_COLLECTION", "subscriptions"
 ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "*")
 MEDIA_DELETE_URL = os.getenv("MEDIA_DELETE_URL", "")
 MEDIA_DELETE_SHARED_SECRET = os.getenv("MEDIA_DELETE_SHARED_SECRET", "")
+GATEWAY_SHARED_SECRET = os.getenv("GATEWAY_SHARED_SECRET", "")
 
 FIELD_FILE_ID = os.getenv("FIELD_FILE_ID", "file_id")
 FIELD_FILE_KEY = os.getenv("FIELD_FILE_KEY", "file_key")
@@ -45,10 +46,14 @@ def query_api(request):
         return _response({}, 204)
 
     try:
+        _require_gateway_secret(request)
         path = _normalise_path(request.path)
 
         if request.method == "GET" and path == "/query":
             return _response({"data": _query_records(request.args)})
+
+        if request.method == "GET" and path == "/tags":
+            return _response({"data": _list_tags(request.args)})
 
         if request.method == "POST" and path.startswith("/files/") and path.endswith("/tags"):
             file_id = path.removeprefix("/files/").removesuffix("/tags").strip("/")
@@ -76,10 +81,19 @@ def query_api(request):
             return _response(_unsubscribe(user_id, tag))
 
         return _response({"message": "Not found"}, 404)
+    except PermissionError as exc:
+        return _response({"message": str(exc)}, 403)
     except ValueError as exc:
         return _response({"message": str(exc)}, 400)
     except Exception as exc:
         return _response({"message": str(exc)}, 500)
+
+
+def _require_gateway_secret(request):
+    if not GATEWAY_SHARED_SECRET:
+        return
+    if request.headers.get("X-Gateway-Secret") != GATEWAY_SHARED_SECRET:
+        raise PermissionError("Forbidden")
 
 
 def _normalise_path(path):
@@ -101,7 +115,7 @@ def _response(payload, status=200):
         {
             "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
             "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS",
-            "Access-Control-Allow-Headers": "Authorization,Content-Type",
+            "Access-Control-Allow-Headers": "Authorization,Content-Type,X-Gateway-Secret",
             "Content-Type": "application/json",
         },
     )
@@ -166,6 +180,34 @@ def _query_records(args):
         ]
 
     raise ValueError(f"Unsupported query type: {query_type}")
+
+
+def _list_tags(args):
+    include_counts = str(args.get("includeCounts") or "").lower() == "true"
+    counts = {}
+
+    docs = _collection().where(FIELD_STATUS, "==", "processed").stream()
+    for doc in docs:
+        data = doc.to_dict() or {}
+
+        tag_counts = data.get(FIELD_TAGS) or {}
+        if isinstance(tag_counts, dict):
+            for tag, count in tag_counts.items():
+                clean_tag = str(tag).strip().lower()
+                if not clean_tag:
+                    continue
+                counts[clean_tag] = counts.get(clean_tag, 0) + int(count or 0)
+
+        all_tags = data.get(FIELD_ALL_TAGS) or []
+        if isinstance(all_tags, list):
+            for tag in all_tags:
+                clean_tag = str(tag).strip().lower()
+                if clean_tag and clean_tag not in counts:
+                    counts[clean_tag] = 0
+
+    if include_counts:
+        return [{"tag": tag, "count": counts[tag]} for tag in sorted(counts)]
+    return sorted(counts)
 
 
 def _optional_int(value):
