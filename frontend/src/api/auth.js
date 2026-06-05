@@ -71,6 +71,17 @@ export function getUserId() {
   return localStorage.getItem('user_id') || localStorage.getItem('user_email') || 'demo_user'
 }
 
+export function isTokenExpired() {
+  const token = getToken()
+  if (!token) return true
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))
+    return Date.now() >= payload.exp * 1000
+  } catch {
+    return true
+  }
+}
+
 export function isLoggedIn() {
-  return !!getToken()
+  return !!getToken() && !isTokenExpired()
 }

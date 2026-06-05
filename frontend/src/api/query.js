@@ -1,4 +1,4 @@
-import { authHeaders } from './http'
+import { fetchWithAuth } from './http'
 
 const QUERY_BASE_URL = import.meta.env.VITE_QUERY_API_URL || import.meta.env.VITE_API_URL
 const USE_MOCK = import.meta.env.VITE_USE_MOCK_QUERY !== 'false' || !QUERY_BASE_URL
@@ -147,13 +147,7 @@ function removeTagsFromMockRecords(fileIds, tags) {
 }
 
 async function request(path, options = {}) {
-  const res = await fetch(`${QUERY_BASE_URL}${path}`, {
-    ...options,
-    headers: {
-      ...authHeaders(),
-      ...(options.headers || {}),
-    },
-  })
+  const res = await fetchWithAuth(`${QUERY_BASE_URL}${path}`, options)
   if (!res.ok) throw new Error(`Query request failed (${res.status})`)
   const payload = await res.json()
   return payload.data ?? payload.results ?? payload

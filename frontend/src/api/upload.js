@@ -1,9 +1,9 @@
-import { BASE_URL, authHeaders } from './http'
+import { BASE_URL, fetchWithAuth } from './http'
 
 export async function requestUploadUrl(filename, contentType, fileHash) {
-  const res = await fetch(`${BASE_URL}/requestUploadFile`, {
+  const res = await fetchWithAuth(`${BASE_URL}/requestUploadFile`, {
     method: 'POST',
-    headers: authHeaders(),
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ filename, contentType, fileHash }),
   })
   if (!res.ok) throw new Error(`Failed to get upload URL (${res.status})`)
@@ -32,21 +32,14 @@ export function uploadToS3(uploadUrl, file, onProgress) {
 }
 
 
-//TODO 查firestore
-export async function pollResults(fileKey, maxWaitMs = 60000) {
-  const interval = 2000
-  const maxTries = maxWaitMs / interval
 
-  for (let i = 0; i < maxTries; i++) {
-    await new Promise(r => setTimeout(r, interval))
-    const res = await fetch(`${BASE_URL}/results/${encodeURIComponent(fileKey)}`, {
-      headers: authHeaders(),
-    })
-    if (!res.ok) throw new Error(`Failed to fetch results (${res.status})`)
-    const { code, message, data } = await res.json()
-    if (code === 200) return data.results   // done
-    if (code === 202) continue              // still processing
-    throw new Error(message || 'Detection failed')
-  }
-  throw new Error('Detection timed out. Please try again.')
+export async function pollResults(fileKey, onProgress, maxWaitMs = 300000) {
+
+  const msgBuffer = new TextEncoder().encode(fileKey)
+  const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer)
+  const fileId = Array.from(new Uint8Array(hashBuffer))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('')
+
+  return pollDetectionStatus(fileId, onProgress)
 }
