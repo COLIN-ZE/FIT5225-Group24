@@ -66,6 +66,7 @@
           @keydown.enter.prevent="handleBatchTags"
         />
         <button type="button" class="btn-secondary" @click="handleBatchTags">Add Tags</button>
+        <button type="button" class="btn-warning" @click="handleBatchRemoveTags">Remove Tags</button>
         <button type="button" class="btn-ghost" @click="clearSelection">Clear</button>
       </section>
 
@@ -88,6 +89,7 @@
           @toggle-select="toggleSelect"
           @preview="openPreview"
           @add-tags="handleAddTags"
+          @remove-tags="handleRemoveTags"
           @delete="confirmDelete"
         />
       </section>
@@ -137,6 +139,8 @@ import {
   deleteDetectionFile,
   isUsingMockQuery,
   queryDetections,
+  removeTags,
+  removeTagsBatch,
 } from '../api/query'
 import ResultCard from '../components/ResultCard.vue'
 
@@ -224,6 +228,17 @@ function applyTagsLocally(fileIds, tags) {
   })
 }
 
+function removeTagsLocally(fileIds, tags) {
+  const removals = new Set(tags.map(normaliseTag))
+  results.value = results.value.map(record => {
+    if (!fileIds.includes(record.fileId)) return record
+    return {
+      ...record,
+      tags: record.tags.filter(tag => !removals.has(normaliseTag(tag))),
+    }
+  })
+}
+
 async function runQuery() {
   loading.value = true
   errorMsg.value = ''
@@ -281,6 +296,28 @@ async function handleAddTags(record, tags) {
   }
 }
 
+async function handleRemoveTags(record, tags) {
+  errorMsg.value = ''
+  message.value = ''
+  const cleanTags = uniqueTags(tags)
+  if (!cleanTags.length) return
+
+  const existing = new Set((record.tags || []).map(normaliseTag))
+  const missingTags = cleanTags.filter(tag => !existing.has(normaliseTag(tag)))
+  if (missingTags.length) {
+    errorMsg.value = `Tag does not exist on this file: ${missingTags.join(', ')}.`
+    return
+  }
+
+  try {
+    await removeTags(record.fileId, cleanTags)
+    removeTagsLocally([record.fileId], cleanTags)
+    message.value = `Removed ${cleanTags.length} tag${cleanTags.length === 1 ? '' : 's'} from ${record.fileName}.`
+  } catch (e) {
+    errorMsg.value = e.message || 'Failed to remove tags.'
+  }
+}
+
 async function handleBatchTags() {
   const tags = parseTags(batchTagText.value)
   if (!selectedIds.value.length || !tags.length) return
@@ -295,6 +332,23 @@ async function handleBatchTags() {
     batchTagText.value = ''
   } catch (e) {
     errorMsg.value = e.message || 'Failed to add batch tags.'
+  }
+}
+
+async function handleBatchRemoveTags() {
+  const tags = uniqueTags(parseTags(batchTagText.value))
+  if (!selectedIds.value.length || !tags.length) return
+
+  errorMsg.value = ''
+  message.value = ''
+
+  try {
+    await removeTagsBatch(selectedIds.value, tags)
+    removeTagsLocally(selectedIds.value, tags)
+    message.value = `Removed ${tags.length} tag${tags.length === 1 ? '' : 's'} from ${selectedIds.value.length} files.`
+    batchTagText.value = ''
+  } catch (e) {
+    errorMsg.value = e.message || 'Failed to remove batch tags.'
   }
 }
 
@@ -484,6 +538,7 @@ input {
 .btn-primary,
 .btn-refresh,
 .btn-secondary,
+.btn-warning,
 .btn-ghost {
   border: none;
   border-radius: 6px;
@@ -509,6 +564,11 @@ input {
   color: #2f6fb3;
 }
 
+.btn-warning {
+  background: #fff4df;
+  color: #9a5b00;
+}
+
 .btn-ghost {
   background: #eef2f6;
   color: #435466;
@@ -516,7 +576,7 @@ input {
 
 .batch-bar {
   display: grid;
-  grid-template-columns: auto minmax(180px, 1fr) auto auto;
+  grid-template-columns: auto minmax(180px, 1fr) auto auto auto;
   gap: 10px;
   align-items: center;
   margin-top: 16px;

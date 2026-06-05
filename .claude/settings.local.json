@@ -10,7 +10,11 @@
       "Bash(Remove-Item -Recurse -Force \"E:\\\\Monash\\\\FIT5225\\\\FIT5225-Group24\\\\backend\")",
       "PowerShell(New-Item *)",
       "PowerShell(Move-Item *)",
-      "Bash(pip install *)"
+      "Bash(pip install *)",
+      "Bash(git checkout *)",
+      "Bash(git commit *)",
+      "Bash(git rm *)",
+      "Bash(git push *)"
     ]
   }
 }

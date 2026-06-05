@@ -1,4 +1,4 @@
-import { fetchWithAuth } from './http'
+import { authHeaders } from './http'
 
 const QUERY_BASE_URL = import.meta.env.VITE_QUERY_API_URL || import.meta.env.VITE_API_URL
 const USE_MOCK = import.meta.env.VITE_USE_MOCK_QUERY !== 'false' || !QUERY_BASE_URL
@@ -138,8 +138,22 @@ function mergeTagsIntoMockRecords(fileIds, tags) {
   })
 }
 
+function removeTagsFromMockRecords(fileIds, tags) {
+  const removals = new Set(tags.map(tag => tag.toLowerCase()))
+  mockRecords.forEach(record => {
+    if (!fileIds.includes(record.fileId)) return
+    record.tags = record.tags.filter(tag => !removals.has(tag.toLowerCase()))
+  })
+}
+
 async function request(path, options = {}) {
-  const res = await fetchWithAuth(`${QUERY_BASE_URL}${path}`, options)
+  const res = await fetch(`${QUERY_BASE_URL}${path}`, {
+    ...options,
+    headers: {
+      ...authHeaders(),
+      ...(options.headers || {}),
+    },
+  })
   if (!res.ok) throw new Error(`Query request failed (${res.status})`)
   const payload = await res.json()
   return payload.data ?? payload.results ?? payload
@@ -182,6 +196,34 @@ export async function addTagsBatch(fileIds, tags) {
   }
 
   return request(`${FILES_PATH}/tags:batchAdd`, {
+    method: 'POST',
+    body: JSON.stringify({ fileIds, tags: cleanTags }),
+  })
+}
+
+export async function removeTags(fileId, tags) {
+  const cleanTags = tags.map(tag => tag.trim()).filter(Boolean)
+  if (USE_MOCK) {
+    await delay(200)
+    removeTagsFromMockRecords([fileId], cleanTags)
+    return { fileId, tags: cleanTags }
+  }
+
+  return request(`${FILES_PATH}/${encodeURIComponent(fileId)}/tags`, {
+    method: 'DELETE',
+    body: JSON.stringify({ tags: cleanTags }),
+  })
+}
+
+export async function removeTagsBatch(fileIds, tags) {
+  const cleanTags = tags.map(tag => tag.trim()).filter(Boolean)
+  if (USE_MOCK) {
+    await delay(250)
+    removeTagsFromMockRecords(fileIds, cleanTags)
+    return { fileIds, tags: cleanTags }
+  }
+
+  return request(`${FILES_PATH}/tags:batchRemove`, {
     method: 'POST',
     body: JSON.stringify({ fileIds, tags: cleanTags }),
   })
