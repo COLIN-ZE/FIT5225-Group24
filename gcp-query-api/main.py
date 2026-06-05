@@ -2,7 +2,6 @@ import json
 import os
 from urllib import request as urlrequest
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
 from datetime import date, datetime
 
 from google.cloud import firestore
@@ -14,9 +13,6 @@ ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "*")
 MEDIA_DELETE_URL = os.getenv("MEDIA_DELETE_URL", "")
 MEDIA_DELETE_SHARED_SECRET = os.getenv("MEDIA_DELETE_SHARED_SECRET", "")
 GATEWAY_SHARED_SECRET = os.getenv("GATEWAY_SHARED_SECRET", "")
-AWS_S3_BUCKET = os.getenv("AWS_S3_BUCKET", "")
-AWS_REGION = os.getenv("AWS_REGION", "ap-southeast-2")
-AWS_PRESIGNED_URL_TTL = int(os.getenv("AWS_PRESIGNED_URL_TTL", "3600"))
 
 FIELD_FILE_ID = os.getenv("FIELD_FILE_ID", "file_id")
 FIELD_FILE_KEY = os.getenv("FIELD_FILE_KEY", "file_key")
@@ -43,7 +39,6 @@ FIELD_SUB_UPDATED_AT = os.getenv("FIELD_SUB_UPDATED_AT", "updated_at")
 
 
 db = firestore.Client()
-_s3_client = None
 
 
 def query_api(request):
@@ -64,17 +59,9 @@ def query_api(request):
             file_id = path.removeprefix("/files/").removesuffix("/tags").strip("/")
             return _response(_add_tags(file_id, _json_body(request).get("tags", [])))
 
-        if request.method == "DELETE" and path.startswith("/files/") and path.endswith("/tags"):
-            file_id = path.removeprefix("/files/").removesuffix("/tags").strip("/")
-            return _response(_remove_tags(file_id, _json_body(request).get("tags", [])))
-
         if request.method == "POST" and path == "/files/tags:batchAdd":
             body = _json_body(request)
             return _response(_add_tags_batch(body.get("fileIds", []), body.get("tags", [])))
-
-        if request.method == "POST" and path == "/files/tags:batchRemove":
-            body = _json_body(request)
-            return _response(_remove_tags_batch(body.get("fileIds", []), body.get("tags", [])))
 
         if request.method == "DELETE" and path.startswith("/files/"):
             file_id = path.removeprefix("/files/").strip("/")
@@ -231,11 +218,6 @@ def _optional_int(value):
 
 def _normalise_record(doc_id, data):
     file_id = data.get(FIELD_FILE_ID) or doc_id
-    file_type = data.get(FIELD_FILE_TYPE) or ""
-    ai_ready_uris = data.get(FIELD_AI_READY_URIS) or []
-    if not isinstance(ai_ready_uris, list):
-        ai_ready_uris = []
-
     tag_counts = data.get(FIELD_TAGS) or {}
     if not isinstance(tag_counts, dict):
         tag_counts = {}
@@ -252,14 +234,13 @@ def _normalise_record(doc_id, data):
     species = primary.get("scientific_name") or primary.get("species") or (all_tags[0] if all_tags else "")
     common_name = primary.get("species") or species
     confidence = primary.get("classification_confidence") or primary.get("detection_confidence") or 0
-    preview_source = _preview_source(data, file_type, ai_ready_uris)
 
     return {
         "fileId": file_id,
         "fileName": _filename_from_key(data.get(FIELD_FILE_KEY) or data.get(FIELD_FILE_URL) or file_id),
         "fileKey": data.get(FIELD_FILE_KEY) or "",
-        "imageUrl": _browser_media_url(preview_source),
-        "thumbnailUrl": _browser_media_url(data.get(FIELD_THUMBNAIL_URL)),
+        "imageUrl": data.get(FIELD_FILE_URL) or "",
+        "thumbnailUrl": data.get(FIELD_THUMBNAIL_URL) or "",
         "species": _display_species(species),
         "commonName": _display_species(common_name),
         "confidence": float(confidence or 0),
@@ -267,16 +248,10 @@ def _normalise_record(doc_id, data):
         "tags": sorted({str(tag) for tag in all_tags}),
         "tagCounts": tag_counts,
         "detections": detections,
-        "aiReadyUris": ai_ready_uris,
-        "fileType": file_type,
+        "aiReadyUris": data.get(FIELD_AI_READY_URIS) or [],
+        "fileType": data.get(FIELD_FILE_TYPE) or "",
         "uploadedAt": data.get(FIELD_CREATED_AT) or "",
     }
-
-
-def _preview_source(data, file_type, ai_ready_uris):
-    if str(file_type).lower() == "video" and ai_ready_uris:
-        return ai_ready_uris[0]
-    return data.get(FIELD_FILE_URL) or data.get(FIELD_FILE_KEY)
 
 
 def _count_matches(record, tag, min_count, max_count):
@@ -306,66 +281,6 @@ def _filename_from_key(value):
     if not value:
         return ""
     return value.rstrip("/").split("/")[-1]
-
-
-def _browser_media_url(value):
-    value = str(value or "").strip()
-    if not value:
-        return ""
-    if value.startswith(("http://", "https://", "data:")):
-        return value
-
-    ref = _s3_ref(value)
-    if not ref:
-        return value
-
-    signed_url = _presigned_s3_get_url(ref["bucket"], ref["key"])
-    return signed_url or value
-
-
-def _s3_ref(value):
-    if value.startswith("s3://"):
-        parsed = urlparse(value)
-        bucket = parsed.netloc
-        key = parsed.path.lstrip("/")
-        return {"bucket": bucket, "key": key} if bucket and key else None
-
-    if value.startswith(("raw/", "thumb/")):
-        return {"bucket": AWS_S3_BUCKET, "key": value} if AWS_S3_BUCKET else None
-
-    return None
-
-
-def _presigned_s3_get_url(bucket, key):
-    client = _get_s3_client()
-    if not client:
-        return ""
-    try:
-        return client.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": bucket, "Key": key},
-            ExpiresIn=AWS_PRESIGNED_URL_TTL,
-        )
-    except Exception:
-        return ""
-
-
-def _get_s3_client():
-    global _s3_client
-    if _s3_client:
-        return _s3_client
-    try:
-        import boto3
-    except ImportError:
-        return None
-
-    _s3_client = boto3.client(
-        "s3",
-        region_name=AWS_REGION,
-        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID") or None,
-        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY") or None,
-    )
-    return _s3_client
 
 
 def _get_doc_ref(file_id):
@@ -426,35 +341,6 @@ def _add_tags_batch(file_ids, tags):
     return {"fileIds": file_ids, "tags": clean_tags}
 
 
-def _remove_tags(file_id, tags):
-    clean_tags = _clean_tags(tags)
-    if not clean_tags:
-        raise ValueError("At least one tag is required")
-
-    doc_ref = _get_doc_ref(file_id)
-    _remove_manual_tags(doc_ref, clean_tags)
-    return {"fileId": file_id, "tags": clean_tags}
-
-
-def _remove_tags_batch(file_ids, tags):
-    if not isinstance(file_ids, list) or not file_ids:
-        raise ValueError("fileIds must be a non-empty array")
-
-    clean_tags = _clean_tags(tags)
-    if not clean_tags:
-        raise ValueError("At least one tag is required")
-
-    batch = db.batch()
-    for file_id in file_ids:
-        doc_ref = _get_doc_ref(file_id)
-        snapshot = doc_ref.get()
-        data = snapshot.to_dict() or {}
-        batch.update(doc_ref, _removed_tag_update(data, clean_tags))
-    batch.commit()
-
-    return {"fileIds": file_ids, "tags": clean_tags}
-
-
 def _delete_file(file_id):
     if MEDIA_DELETE_URL:
         return _delegate_delete_file(file_id)
@@ -470,7 +356,7 @@ def _delete_file(file_id):
 
 
 def _delete_s3_objects(data):
-    bucket = AWS_S3_BUCKET
+    bucket = os.getenv("AWS_S3_BUCKET")
     keys = [
         data.get(FIELD_FILE_KEY),
     ]
@@ -505,21 +391,6 @@ def _update_manual_tags(doc_ref, tags):
     })
 
 
-def _remove_manual_tags(doc_ref, tags):
-    snapshot = doc_ref.get()
-    data = snapshot.to_dict() or {}
-    doc_ref.update(_removed_tag_update(data, tags))
-
-
-def _removed_tag_update(data, removals):
-    return {
-        FIELD_TAGS: _removed_tag_counts(data.get(FIELD_TAGS), removals),
-        FIELD_MANUAL_TAGS: _removed_tags(data.get(FIELD_MANUAL_TAGS), removals),
-        FIELD_ALL_TAGS: _removed_tags(data.get(FIELD_ALL_TAGS), removals),
-        FIELD_UPDATED_AT: firestore.SERVER_TIMESTAMP,
-    }
-
-
 def _merged_tags(existing, additions):
     existing = existing if isinstance(existing, list) else []
     return sorted({str(tag).strip().lower() for tag in [*existing, *additions] if str(tag).strip()})
@@ -533,26 +404,6 @@ def _merged_tag_counts(existing, additions):
         if clean and clean not in merged:
             merged[clean] = 1
     return merged
-
-
-def _removed_tags(existing, removals):
-    existing = existing if isinstance(existing, list) else []
-    removal_set = {str(tag).strip().lower() for tag in removals if str(tag).strip()}
-    return sorted({
-        str(tag).strip().lower()
-        for tag in existing
-        if str(tag).strip() and str(tag).strip().lower() not in removal_set
-    })
-
-
-def _removed_tag_counts(existing, removals):
-    counts = existing if isinstance(existing, dict) else {}
-    removal_set = {str(tag).strip().lower() for tag in removals if str(tag).strip()}
-    return {
-        str(key).strip().lower(): int(value or 0)
-        for key, value in counts.items()
-        if str(key).strip() and str(key).strip().lower() not in removal_set
-    }
 
 
 def _delegate_delete_file(file_id):

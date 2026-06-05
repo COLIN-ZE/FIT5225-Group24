@@ -19,7 +19,7 @@ from pathlib import Path
 import boto3
 
 from checksum import sha256_file, sha256_stream
-from dedup import is_content_duplicate, register_hash, s3_object_exists
+from dedup import is_duplicate
 from media import (
     create_ai_ready_image,
     create_thumbnail,
@@ -65,11 +65,6 @@ def _rejected_key(object_key: str) -> str:
     return f"{REJECTED_PREFIX}{rel}".replace("\\", "/")
 
 
-def _already_processed(bucket: str, key: str) -> bool:
-    """Same raw key re-triggered (S3 retry / duplicate event) — outputs already exist."""
-    return s3_object_exists(s3, bucket, _thumb_key(key))
-
-
 def _move_to_rejected(bucket: str | None, key: str | None, local_path: str | None) -> str:
     if bucket and key:
         dest = _rejected_key(key)
@@ -89,54 +84,16 @@ def _move_to_rejected(bucket: str | None, key: str | None, local_path: str | Non
     return ""
 
 
-def _user_id_from_raw_key(object_key: str) -> str | None:
-    """Cognito sub is the first path segment under raw/."""
-    if not object_key.startswith(RAW_PREFIX):
-        return None
-    rel = object_key[len(RAW_PREFIX) :].strip("/")
-    if not rel:
-        return None
-    return rel.split("/", 1)[0]
-
-
-def _gcp_callback_body(result: dict) -> dict:
-    file_key = result.get("fileKey") or ""
-    s3_uri = result.get("s3_uri") or ""
-    body: dict = {
-        "fileKey": file_key,
-        "file_url": s3_uri if s3_uri.startswith("s3://") else None,
-        "ai_ready_uris": result.get("ai_ready_uris") or [],
-        "thumbnail_uri": result.get("thumbnail_uri"),
-        "sha256": result.get("sha256"),
-        "user_id": _user_id_from_raw_key(file_key),
-    }
-    if result.get("media_type"):
-        body["file_type"] = result["media_type"]
-    return body
-
-
-def notify_gcp(result: dict) -> None:
+def notify_gcp(payload: dict) -> None:
     url = os.environ.get("GCP_CALLBACK_URL", "").strip()
     if not url:
-        print("[notify_gcp] GCP_CALLBACK_URL not set, skipping")
+        print("[notify_gcp] GCP_CALLBACK_URL not set, skipping:", json.dumps(payload))
         return
-    if result.get("status") != "processed":
-        return
-
     import requests
 
-    headers = {"Content-Type": "application/json"}
-    secret = os.environ.get("GCP_CALLBACK_SECRET", "").strip()
-    if secret:
-        headers["X-Shared-Secret"] = secret
-
-    body = _gcp_callback_body(result)
-    print("[notify_gcp] POST", url, json.dumps(body))
-    resp = requests.post(url, json=body, headers=headers, timeout=120)
-    if not resp.ok:
-        print("[notify_gcp] FAILED", resp.status_code, resp.text[:2000])
+    resp = requests.post(url, json=payload, timeout=60)
     resp.raise_for_status()
-    print("[notify_gcp] OK", resp.status_code, resp.text[:500])
+    print("[notify_gcp] OK", resp.status_code)
 
 
 def process_file(
@@ -172,18 +129,7 @@ def process_file(
 
     file_key_for_status = key if bucket and key else None
 
-    if is_content_duplicate(digest, s3_uri):
-        if bucket and key and _already_processed(bucket, key):
-            result = {
-                "status": "already_processed",
-                "sha256": digest,
-                "s3_uri": s3_uri,
-                "fileKey": key,
-                "message": "S3 retry or duplicate event; thumb exists, skipping",
-            }
-            print(json.dumps(result, indent=2))
-            return result
-
+    if is_duplicate(digest, s3_uri):
         rejected_uri = _move_to_rejected(bucket, key, local_path)
         result = {
             "status": "duplicate",
@@ -234,8 +180,6 @@ def process_file(
 
     else:
         raise ValueError(f"Unsupported file type: {work_path}")
-
-    register_hash(digest)
 
     result = {
         "status": "processed",

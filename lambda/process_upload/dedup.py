@@ -4,8 +4,6 @@ from pathlib import Path
 
 import requests
 
-from botocore.exceptions import ClientError
-
 
 def _local_dedup_path() -> Path:
     """Writable path: /tmp on Lambda; output/ for local test_local.py."""
@@ -33,16 +31,14 @@ def _save_local_cache(hashes: set[str]) -> None:
         json.dump({"hashes": sorted(hashes)}, f, indent=2)
 
 
-def has_seen_hash(sha256: str) -> bool:
-    """True if this content hash was successfully processed before."""
-    return sha256 in _load_local_cache()
-
-
-def register_hash(sha256: str) -> None:
-    """Call only after thumb/ai-ready upload succeeds."""
+def is_duplicate_local(sha256: str) -> bool:
+    """Check/register SHA-256 using a local JSON file (for test_local.py)."""
     seen = _load_local_cache()
+    if sha256 in seen:
+        return True
     seen.add(sha256)
     _save_local_cache(seen)
+    return False
 
 
 def check_duplicate_remote(sha256: str, s3_uri: str) -> bool:
@@ -65,22 +61,10 @@ def check_duplicate_remote(sha256: str, s3_uri: str) -> bool:
     return bool(data.get("duplicate"))
 
 
-def is_content_duplicate(sha256: str, s3_uri: str = "") -> bool:
+def is_duplicate(sha256: str, s3_uri: str = "") -> bool:
     """
-    True when this file content was already processed (local cache or GCP dedup API).
-    Does not register the hash — call register_hash() after a successful run.
+    Use GCP API when GCP_DEDUP_URL is set; otherwise local JSON cache.
     """
     if os.environ.get("GCP_DEDUP_URL", "").strip():
         return check_duplicate_remote(sha256, s3_uri)
-    return has_seen_hash(sha256)
-
-
-def s3_object_exists(s3_client, bucket: str, key: str) -> bool:
-    try:
-        s3_client.head_object(Bucket=bucket, Key=key)
-        return True
-    except ClientError as exc:
-        code = exc.response.get("Error", {}).get("Code", "")
-        if code in ("404", "NoSuchKey", "NotFound"):
-            return False
-        raise
+    return is_duplicate_local(sha256)

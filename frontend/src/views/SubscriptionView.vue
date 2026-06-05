@@ -117,6 +117,7 @@ import {
   subscribe,
   unsubscribe,
 } from '../api/subscription'
+import { queryDetections } from '../api/query'
 
 const userName = localStorage.getItem('user_name') || localStorage.getItem('user_email') || 'User'
 const userEmail = localStorage.getItem('user_email') || ''
@@ -158,7 +159,14 @@ async function loadSubscriptions() {
 async function loadAvailableTags() {
   tagsLoading.value = true
   try {
-    availableTags.value = await getAllTags()
+    const records = await queryDetections({ type: 'all' })
+    const tagSet = new Set()
+    for (const record of records) {
+      for (const tag of record.tags) {
+        if (tag) tagSet.add(tag.toLowerCase())
+      }
+    }
+    availableTags.value = Array.from(tagSet).sort()
   } catch {
     // silently fall back — chips are optional
   } finally {

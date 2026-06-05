@@ -41,13 +41,6 @@
           @keydown.enter.prevent="submitTags"
         />
         <button type="button" class="btn-secondary" @click="submitTags">Add Tags</button>
-        <input
-          v-model="removeTagText"
-          type="text"
-          placeholder="Remove tags, comma separated"
-          @keydown.enter.prevent="submitRemoveTags"
-        />
-        <button type="button" class="btn-warning" @click="submitRemoveTags">Remove Tags</button>
         <button type="button" class="btn-danger" @click="$emit('delete', record)">Delete</button>
       </div>
     </div>
@@ -68,9 +61,8 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(['toggle-select', 'preview', 'add-tags', 'remove-tags', 'delete'])
+const emit = defineEmits(['toggle-select', 'preview', 'add-tags', 'delete'])
 const tagText = ref('')
-const removeTagText = ref('')
 
 const confidenceLabel = computed(() => `${(props.record.confidence * 100).toFixed(1)}%`)
 
@@ -79,13 +71,6 @@ function submitTags() {
   if (!tags.length) return
   emit('add-tags', props.record, tags)
   tagText.value = ''
-}
-
-function submitRemoveTags() {
-  const tags = removeTagText.value.split(',').map(tag => tag.trim()).filter(Boolean)
-  if (!tags.length) return
-  emit('remove-tags', props.record, tags)
-  removeTagText.value = ''
 }
 </script>
 
@@ -230,7 +215,7 @@ p {
 
 .action-row {
   display: grid;
-  grid-template-columns: minmax(150px, 1fr) auto minmax(150px, 1fr) auto auto;
+  grid-template-columns: minmax(150px, 1fr) auto auto;
   gap: 8px;
   margin-top: 14px;
 }
@@ -248,7 +233,6 @@ button {
 }
 
 .btn-secondary,
-.btn-warning,
 .btn-danger {
   border: none;
   border-radius: 6px;
@@ -261,11 +245,6 @@ button {
 .btn-secondary {
   background: #e8f2ff;
   color: #2f6fb3;
-}
-
-.btn-warning {
-  background: #fff4df;
-  color: #9a5b00;
 }
 
 .btn-danger {
