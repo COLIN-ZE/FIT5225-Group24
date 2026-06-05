@@ -124,6 +124,25 @@ The API normalises Firestore documents to the frontend shape:
 }
 ```
 
+`imageUrl` and `thumbnailUrl` are browser-facing fields. If Firestore stores S3
+values such as `s3://bucket/thumb/example.jpg` or stable keys such as
+`raw/example.jpg`, the query API converts them to temporary HTTPS presigned GET
+URLs before returning them to the frontend.
+
+Configure S3 signing with:
+
+```env
+AWS_S3_BUCKET=aussie-ecolens-media-storage-2026
+AWS_REGION=ap-southeast-2
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+AWS_PRESIGNED_URL_TTL=3600
+```
+
+Do not commit real AWS credentials. Store them only as Cloud Function
+environment variables. The credentials need `s3:GetObject` for `raw/*` and
+`thumb/*`.
+
 ## Tag Updates
 
 Single tag update:

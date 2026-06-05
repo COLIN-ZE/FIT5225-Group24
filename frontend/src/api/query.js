@@ -138,6 +138,14 @@ function mergeTagsIntoMockRecords(fileIds, tags) {
   })
 }
 
+function removeTagsFromMockRecords(fileIds, tags) {
+  const removals = new Set(tags.map(tag => tag.toLowerCase()))
+  mockRecords.forEach(record => {
+    if (!fileIds.includes(record.fileId)) return
+    record.tags = record.tags.filter(tag => !removals.has(tag.toLowerCase()))
+  })
+}
+
 async function request(path, options = {}) {
   const res = await fetch(`${QUERY_BASE_URL}${path}`, {
     ...options,
@@ -188,6 +196,34 @@ export async function addTagsBatch(fileIds, tags) {
   }
 
   return request(`${FILES_PATH}/tags:batchAdd`, {
+    method: 'POST',
+    body: JSON.stringify({ fileIds, tags: cleanTags }),
+  })
+}
+
+export async function removeTags(fileId, tags) {
+  const cleanTags = tags.map(tag => tag.trim()).filter(Boolean)
+  if (USE_MOCK) {
+    await delay(200)
+    removeTagsFromMockRecords([fileId], cleanTags)
+    return { fileId, tags: cleanTags }
+  }
+
+  return request(`${FILES_PATH}/${encodeURIComponent(fileId)}/tags`, {
+    method: 'DELETE',
+    body: JSON.stringify({ tags: cleanTags }),
+  })
+}
+
+export async function removeTagsBatch(fileIds, tags) {
+  const cleanTags = tags.map(tag => tag.trim()).filter(Boolean)
+  if (USE_MOCK) {
+    await delay(250)
+    removeTagsFromMockRecords(fileIds, cleanTags)
+    return { fileIds, tags: cleanTags }
+  }
+
+  return request(`${FILES_PATH}/tags:batchRemove`, {
     method: 'POST',
     body: JSON.stringify({ fileIds, tags: cleanTags }),
   })
