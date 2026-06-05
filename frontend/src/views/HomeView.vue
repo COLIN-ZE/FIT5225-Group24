@@ -108,26 +108,63 @@
           <span class="progress-label">Uploading {{ uploadProgress }}%</span>
         </div>
 
-        <!-- Detection progress -->
-        <div v-if="uploadStep === 'analysing'" class="detection-progress">
-          <div class="detection-stage">
-            <span class="spinner spinner-dark"></span>
-            <span>{{ stageLabel }}</span>
+        <!-- Detection progress: stage pipeline -->
+        <div v-if="uploadStep === 'analysing'" class="analysis-panel">
+          <p class="analysis-title">
+            <span class="spinner spinner-green"></span>
+            Analysing — {{ stageLabel }}
+          </p>
+          <div class="stage-pipeline">
+            <template v-for="(stage, si) in STAGES" :key="stage.key">
+              <div class="stage-node" :class="stageNodeClass(si)">
+                <div class="node-circle">
+                  <svg v-if="si < currentStageIndex" width="10" height="10" viewBox="0 0 10 10" fill="none">
+                    <polyline points="1.5,5.5 4,8 8.5,2" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                  <span v-else-if="si === currentStageIndex" class="node-spinner"></span>
+                </div>
+                <span class="node-label">{{ stage.label }}</span>
+              </div>
+              <div v-if="si < STAGES.length - 1" class="stage-connector" :class="{ filled: si < currentStageIndex }"></div>
+            </template>
           </div>
-          <div class="progress-wrap" style="margin-top:8px">
-            <div class="progress-bar progress-bar-green" :style="{ width: detectionProgress + '%' }"></div>
+          <div class="analysis-bar-wrap">
+            <div class="analysis-bar" :style="{ width: detectionProgress + '%' }"></div>
           </div>
-          <span class="progress-label-sm">{{ detectionProgress }}%</span>
+          <span class="analysis-pct">{{ detectionProgress }}%</span>
+        </div>
+
+        <!-- Detection complete banner -->
+        <div v-if="uploadStep === 'done'" class="done-banner">
+          <div class="done-check">
+            <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+              <circle cx="11" cy="11" r="10" fill="#2ecc71"/>
+              <polyline points="5.5,11 9,14.5 16.5,7.5" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <div class="done-text">
+            <strong>Detection complete</strong>
+            <span>Your file has been analysed successfully</span>
+          </div>
+          <router-link to="/query" class="btn-view-results">View Results →</router-link>
         </div>
 
         <!-- Upload button -->
         <button
+          v-if="uploadStep !== 'done'"
           class="btn-upload"
           :disabled="!selectedFile || uploading"
           @click="handleUpload"
         >
           <span v-if="uploading" class="spinner"></span>
           {{ stepLabel }}
+        </button>
+        <button
+          v-else
+          class="btn-upload btn-reset"
+          @click="resetForNewUpload"
+        >
+          Detect Another
         </button>
 
         <!-- Duplicate notice -->
@@ -198,14 +235,35 @@ const selectedFile = ref(null)
 const previewUrl = ref('')
 const isDragging = ref(false)
 const uploading = ref(false)
-const uploadStep = ref('')      // 'hashing' | 'requesting' | 'uploading' | 'analysing'
+const uploadStep = ref('')      // 'hashing' | 'requesting' | 'uploading' | 'analysing' | 'done'
 const uploadProgress = ref(0)
 const detectionProgress = ref(0)
 const detectionStage = ref('')
+const detectedFileKey = ref('')
 const isDuplicate = ref(false)
 const errorMsg = ref('')
 const results = ref([])
 const videoResults = ref([])
+
+const STAGES = [
+  { key: 'queued',      label: 'Queued' },
+  { key: 'downloading', label: 'Downloading' },
+  { key: 'detecting',   label: 'Detecting' },
+  { key: 'classifying', label: 'Classifying' },
+  { key: 'saving',      label: 'Saving' },
+  { key: 'completed',   label: 'Complete' },
+]
+
+const currentStageIndex = computed(() => {
+  const idx = STAGES.findIndex(s => s.key === detectionStage.value)
+  return idx >= 0 ? idx : 0
+})
+
+function stageNodeClass(i) {
+  if (i < currentStageIndex.value) return 'stage-done'
+  if (i === currentStageIndex.value) return 'stage-active'
+  return 'stage-pending'
+}
 
 const ACCEPTED_IMAGE = 'image/jpeg,image/png,image/jpg'
 const ACCEPTED_VIDEO = 'video/mp4,video/quicktime,video/x-msvideo,video/webm'
@@ -295,6 +353,12 @@ function removeFile() {
   if (fileInput.value) fileInput.value.value = ''
 }
 
+function resetForNewUpload() {
+  removeFile()
+  uploadStep.value = ''
+  detectedFileKey.value = ''
+}
+
 async function handleUpload() {
   if (!selectedFile.value) return
   uploading.value = true
@@ -303,13 +367,12 @@ async function handleUpload() {
   errorMsg.value = ''
   results.value = []
   videoResults.value = []
+  detectedFileKey.value = ''
 
   try {
-   
     uploadStep.value = 'hashing'
     const fileHash = await hashFile(selectedFile.value)
 
-  
     uploadStep.value = 'requesting'
     const { uploadUrl, fileKey, exists } = await requestUploadUrl(
       selectedFile.value.name,
@@ -328,16 +391,33 @@ async function handleUpload() {
     uploadStep.value = 'analysing'
     detectionProgress.value = 0
     detectionStage.value = 'queued'
-    await pollDetectionStatus(fileKey, (status) => {
+
+    const finalData = await pollDetectionStatus(fileKey, (status) => {
       detectionProgress.value = status.progress ?? 0
       detectionStage.value = status.stage ?? ''
     })
 
+    detectedFileKey.value = fileKey
+    uploadStep.value = 'done'
+
+    // Parse inline results if the API returns species data
+    const raw = finalData?.results ?? finalData?.detections ?? []
+    if (Array.isArray(raw) && raw.length) {
+      if (activeTab.value === 'image') {
+        results.value = raw.map(r => ({
+          species: r.species || r.label || '',
+          confidence: Number(r.confidence ?? r.score ?? 0),
+        }))
+      } else {
+        videoResults.value = raw
+      }
+    }
+
   } catch (e) {
     errorMsg.value = e.message || 'Upload failed. Please try again.'
+    uploadStep.value = ''
   } finally {
     uploading.value = false
-    uploadStep.value = ''
   }
 }
 
@@ -619,31 +699,153 @@ h2 { margin: 0 0 8px; font-size: 22px; color: #1a1a2e; }
   text-align: right;
 }
 
-.detection-progress {
-  margin-top: 14px;
+/* ── Analysis panel ── */
+.analysis-panel {
+  margin-top: 16px;
+  background: #f8fffe;
+  border: 1px solid #d4f5e9;
+  border-radius: 12px;
+  padding: 18px 20px 14px;
   text-align: left;
 }
-.detection-stage {
+.analysis-title {
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 13px;
-  color: #444;
-  margin-bottom: 6px;
-}
-.spinner-dark {
-  border-color: rgba(0,0,0,0.15);
-  border-top-color: #2ecc71;
-}
-.progress-bar-green { background: #2ecc71; }
-.progress-label-sm {
-  font-size: 11px;
-  color: #2ecc71;
   font-weight: 600;
+  color: #1a6b47;
+  margin: 0 0 16px;
+}
+.spinner-green {
+  border-color: rgba(46,204,113,0.25);
+  border-top-color: #2ecc71;
+  width: 14px;
+  height: 14px;
+  border-width: 2px;
+}
+
+/* Stage pipeline */
+.stage-pipeline {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin-bottom: 14px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+.stage-node {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+.node-circle {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.3s, border-color 0.3s;
+}
+.stage-done .node-circle  { background: #2ecc71; border: 2px solid #2ecc71; }
+.stage-active .node-circle { background: white; border: 2px solid #2ecc71; }
+.stage-pending .node-circle { background: white; border: 2px solid #dde4ec; }
+
+.node-spinner {
+  width: 10px;
+  height: 10px;
+  border: 2px solid rgba(46,204,113,0.25);
+  border-top-color: #2ecc71;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  display: block;
+}
+.node-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+.stage-done .node-label  { color: #2ecc71; }
+.stage-active .node-label { color: #1a6b47; }
+.stage-pending .node-label { color: #b0bec5; }
+
+.stage-connector {
+  flex: 1;
+  height: 2px;
+  background: #dde4ec;
+  min-width: 12px;
+  max-width: 40px;
+  margin-bottom: 15px;
+  transition: background 0.3s;
+}
+.stage-connector.filled { background: #2ecc71; }
+
+/* Progress bar inside analysis panel */
+.analysis-bar-wrap {
+  height: 6px;
+  background: #d4f5e9;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.analysis-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #2ecc71, #27ae60);
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+.analysis-pct {
   display: block;
   text-align: right;
-  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #2ecc71;
+  margin-top: 4px;
 }
+
+/* ── Done banner ── */
+.done-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+  background: #f0fdf7;
+  border: 1px solid #a8edca;
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+.done-check { flex-shrink: 0; }
+.done-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.done-text strong { font-size: 14px; color: #166534; }
+.done-text span   { font-size: 12px; color: #4ade80; }
+.btn-view-results {
+  flex-shrink: 0;
+  padding: 8px 16px;
+  background: #2ecc71;
+  color: white;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background 0.2s;
+}
+.btn-view-results:hover { background: #27ae60; }
+
+/* Reset button variant */
+.btn-reset {
+  background: #e8f2ff;
+  color: #2f6fb3;
+}
+.btn-reset:hover:not(:disabled) { background: #cce0ff; }
 
 .error { color: #e74c3c; font-size: 13px; margin-top: 10px; }
 

@@ -41,5 +41,5 @@ export async function pollResults(fileKey, onProgress, maxWaitMs = 300000) {
     .map(b => b.toString(16).padStart(2, '0'))
     .join('')
 
-  return pollDetectionStatus(fileId, onProgress)
+  return pollDetectionStatus(fileKey, onProgress)
 }
