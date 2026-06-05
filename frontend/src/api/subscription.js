@@ -2,6 +2,8 @@ import { fetchWithAuth, BASE_URL } from './http'
 import { getUserId } from './auth'
 
 const SUB_PATH = '/subscriptions'
+const SNS_SYNC_PATH = '/subscriptions/sync'
+
 async function request(path, options = {}) {
   const res = await fetchWithAuth(`${BASE_URL}${path}`, options)
   if (!res.ok) throw new Error(`Subscription request failed (${res.status})`)
@@ -43,5 +45,23 @@ export async function unsubscribe(tag) {
       userId: getUserId(),
       email: localStorage.getItem('user_email') || null,
     }),
+  })
+}
+
+// Called after every subscribe/unsubscribe to push the latest tag list to the
+// new SNS-update endpoint on AWS API Gateway.
+export async function syncSubscriptionsWithGateway() {
+  const userId = getUserId()
+  const email = localStorage.getItem('user_email') || ''
+  const latestSubs = await getSubscriptions()
+  const tags = latestSubs.map(s => s.tag)
+
+  const fullUrl = `${BASE_URL}${SNS_SYNC_PATH}`
+  console.log('[debug] sync URL:', fullUrl)  // ← 加这行
+
+  const res = await fetchWithAuth(fullUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ userId, email, tags, status: 'active' }),
   })
 }

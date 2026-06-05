@@ -116,6 +116,7 @@ import {
   getSubscriptions,
   subscribe,
   unsubscribe,
+  syncSubscriptionsWithGateway,
 } from '../api/subscription'
 import { queryDetections } from '../api/query'
 
@@ -184,6 +185,7 @@ async function handleSubscribe() {
     await subscribe(newTag.value)
     newTag.value = ''
     await loadSubscriptions()
+    await syncSubscriptionsWithGateway()
     subSuccess.value = `Subscribed to "${tagName}". You will receive email alerts at ${userEmail || userName}.`
   } catch (e) {
     subError.value = e.message || 'Subscription failed.'
@@ -199,6 +201,7 @@ async function handleUnsubscribe(tag) {
   try {
     await unsubscribe(tag)
     subscriptions.value = subscriptions.value.filter(s => s.tag !== tag)
+    await syncSubscriptionsWithGateway()
     subSuccess.value = `Unsubscribed from "${tag}".`
   } catch (e) {
     subError.value = e.message || 'Failed to unsubscribe.'
