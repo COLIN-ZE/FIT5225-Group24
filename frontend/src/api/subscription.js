@@ -1,15 +1,9 @@
-import { authHeaders, BASE_URL } from './http'
+import { fetchWithAuth, BASE_URL } from './http'
 import { getUserId } from './auth'
 
 const SUB_PATH = '/subscriptions'
 async function request(path, options = {}) {
-  const res = await fetch(`${BASE_URL}${path}`, {
-    ...options,
-    headers: {
-      ...authHeaders(),
-      ...(options.headers || {}),
-    },
-  })
+  const res = await fetchWithAuth(`${BASE_URL}${path}`, options)
   if (!res.ok) throw new Error(`Subscription request failed (${res.status})`)
   const payload = await res.json()
   return payload.data ?? payload.subscriptions ?? payload

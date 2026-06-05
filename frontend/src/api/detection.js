@@ -1,7 +1,7 @@
-import { BASE_URL, authHeaders } from './http'
+import { BASE_URL, fetchWithAuth } from './http'
 
 async function request(path) {
-  const res = await fetch(`${BASE_URL}${path}`, { headers: authHeaders() })
+  const res = await fetchWithAuth(`${BASE_URL}${path}`)
   if (!res.ok) throw new Error(`Detection status request failed (${res.status})`)
   const payload = await res.json()
   return payload.data ?? payload
