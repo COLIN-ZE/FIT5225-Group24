@@ -108,6 +108,18 @@
           <span class="progress-label">Uploading {{ uploadProgress }}%</span>
         </div>
 
+        <!-- Detection progress -->
+        <div v-if="uploadStep === 'analysing'" class="detection-progress">
+          <div class="detection-stage">
+            <span class="spinner spinner-dark"></span>
+            <span>{{ stageLabel }}</span>
+          </div>
+          <div class="progress-wrap" style="margin-top:8px">
+            <div class="progress-bar progress-bar-green" :style="{ width: detectionProgress + '%' }"></div>
+          </div>
+          <span class="progress-label-sm">{{ detectionProgress }}%</span>
+        </div>
+
         <!-- Upload button -->
         <button
           class="btn-upload"
@@ -174,7 +186,8 @@ import { useRouter } from 'vue-router'
 import { logout } from '../api/auth'
 import { validateImage, validateVideo } from '../utils/validate'
 import { hashFile } from '../utils/hash'
-import { requestUploadUrl, uploadToS3 /*, pollResults */ } from '../api/upload'
+import { requestUploadUrl, uploadToS3 } from '../api/upload'
+import { pollDetectionStatus } from '../api/detection'
 
 const userEmail = localStorage.getItem('user_name') || localStorage.getItem('user_email') || 'User'
 const router = useRouter()
@@ -187,6 +200,8 @@ const isDragging = ref(false)
 const uploading = ref(false)
 const uploadStep = ref('')      // 'hashing' | 'requesting' | 'uploading' | 'analysing'
 const uploadProgress = ref(0)
+const detectionProgress = ref(0)
+const detectionStage = ref('')
 const isDuplicate = ref(false)
 const errorMsg = ref('')
 const results = ref([])
@@ -214,6 +229,17 @@ const stepLabel = computed(() => {
   }
   return labels[uploadStep.value] ?? 'Detect Species'
 })
+
+const STAGE_LABELS = {
+  queued:      'Queued — waiting to start…',
+  downloading: 'Downloading file…',
+  detecting:   'Detecting objects…',
+  classifying: 'Classifying species…',
+  saving:      'Saving results…',
+  completed:   'Complete',
+  failed:      'Failed',
+}
+const stageLabel = computed(() => STAGE_LABELS[detectionStage.value] || 'Analysing…')
 
 const sizeWarning = computed(() => {
   if (!selectedFile.value) return ''
@@ -297,11 +323,15 @@ async function handleUpload() {
       await uploadToS3(uploadUrl, selectedFile.value, (pct) => {
         uploadProgress.value = pct
       })
-    }  
-    // uploadStep.value = 'analysing'
-    // const data = await pollResults(fileKey)
-    // if (activeTab.value === 'image') results.value = data
-    // else videoResults.value = data
+    }
+
+    uploadStep.value = 'analysing'
+    detectionProgress.value = 0
+    detectionStage.value = 'queued'
+    await pollDetectionStatus(fileKey, (status) => {
+      detectionProgress.value = status.progress ?? 0
+      detectionStage.value = status.stage ?? ''
+    })
 
   } catch (e) {
     errorMsg.value = e.message || 'Upload failed. Please try again.'
@@ -587,6 +617,32 @@ h2 { margin: 0 0 8px; font-size: 22px; color: #1a1a2e; }
   margin-top: 4px;
   display: block;
   text-align: right;
+}
+
+.detection-progress {
+  margin-top: 14px;
+  text-align: left;
+}
+.detection-stage {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #444;
+  margin-bottom: 6px;
+}
+.spinner-dark {
+  border-color: rgba(0,0,0,0.15);
+  border-top-color: #2ecc71;
+}
+.progress-bar-green { background: #2ecc71; }
+.progress-label-sm {
+  font-size: 11px;
+  color: #2ecc71;
+  font-weight: 600;
+  display: block;
+  text-align: right;
+  margin-top: 2px;
 }
 
 .error { color: #e74c3c; font-size: 13px; margin-top: 10px; }

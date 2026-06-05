@@ -6,6 +6,5 @@ export function authHeaders() {
   const token = getToken()
   return {
     'Authorization': token ? `Bearer ${token}` : '',
-    'Content-Type': 'application/json',
   }
 }

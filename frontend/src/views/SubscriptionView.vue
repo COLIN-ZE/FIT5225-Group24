@@ -15,7 +15,6 @@
       <section class="toolbar">
         <div>
           <h1>Tag Notifications</h1>
-          <p>{{ mockLabel }}</p>
         </div>
       </section>
 
@@ -117,7 +116,6 @@ import {
   getSubscriptions,
   subscribe,
   unsubscribe,
-  isUsingMockSubscription,
 } from '../api/subscription'
 import { queryDetections } from '../api/query'
 
@@ -136,11 +134,6 @@ const loadError = ref('')
 const subError = ref('')
 const subSuccess = ref('')
 
-const mockLabel = computed(() =>
-  isUsingMockSubscription()
-    ? 'Using mock subscription data until the SNS API endpoint is configured.'
-    : 'Connected to the subscription API.',
-)
 
 function isSubscribed(tag) {
   return subscriptions.value.some(s => s.tag === tag.toLowerCase())
@@ -187,10 +180,11 @@ async function handleSubscribe() {
   subError.value = ''
   subSuccess.value = ''
   try {
-    const entry = await subscribe(newTag.value)
-    subscriptions.value.push(entry)
-    subSuccess.value = `Subscribed to "${entry.tag}". You will receive email alerts at ${userEmail || userName}.`
+    const tagName = newTag.value.trim().toLowerCase()
+    await subscribe(newTag.value)
     newTag.value = ''
+    await loadSubscriptions()
+    subSuccess.value = `Subscribed to "${tagName}". You will receive email alerts at ${userEmail || userName}.`
   } catch (e) {
     subError.value = e.message || 'Subscription failed.'
   } finally {
