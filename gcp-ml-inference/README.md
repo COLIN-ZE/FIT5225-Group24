@@ -206,9 +206,38 @@ gcloud functions deploy process-file \
   --region=australia-southeast1 \
   --source=. \
   --entry-point=process_file \
-  --memory=4Gi \
-  --cpu=1 \
+  --memory=6Gi \
+  --cpu=2 \
   --timeout=540s \
-  --max-instances=1 \
+  --max-instances=2 \
   --set-env-vars=PROJECT_ID=<PROJECT_ID>,AWS_ACCESS_KEY_ID=<AWS_ACCESS_KEY_ID>,AWS_SECRET_ACCESS_KEY=<AWS_SECRET_ACCESS_KEY>,AWS_REGION=ap-southeast-2,SHARED_SECRET=<SHARED_SECRET>,SNS_TOPIC_ARN=<SNS_TOPIC_ARN>,MODEL_BUCKET=<MODEL_BUCKET>,MD_MODEL_KEY=mdv5a.pt,CLASSIFIER_MODEL_KEY=model.pt,LABELS_KEY=labels.txt,MAX_VIDEO_FRAMES=20
 For production, credentials and secrets should be stored using Secret Manager rather than plain environment variables.
+
+## Tag-based SNS Notifications
+
+After inference, the function publishes one SNS message containing all detected species.
+
+The `species` message attribute uses `String.Array`:
+
+```json
+{
+  "species": {
+    "DataType": "String.Array",
+    "StringValue": "[\"cattle\", \"human\"]"
+  }
+}
+SNS subscriptions use message-attribute filter policies:
+
+{
+  "species": ["cattle", "human"]
+}
+Each matching subscription receives at most one email per processed file.
+
+## Runtime Resources
+Setting	Value
+Memory	6Gi
+CPU	2
+Maximum instances	2
+Timeout	540s
+Maximum video frames	20
+The second instance can serve detection-status requests while another instance performs ML inference.
