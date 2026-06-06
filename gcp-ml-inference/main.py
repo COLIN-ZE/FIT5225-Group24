@@ -1,3 +1,4 @@
+import json
 import gc
 import hashlib
 import math
@@ -5,7 +6,7 @@ import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 import boto3
 import functions_framework
@@ -34,6 +35,7 @@ MODEL_BUCKET = os.environ.get("MODEL_BUCKET", "")
 MD_MODEL_KEY = os.environ.get("MD_MODEL_KEY", "mdv5a.pt")
 CLASSIFIER_MODEL_KEY = os.environ.get("CLASSIFIER_MODEL_KEY", "model.pt")
 LABELS_KEY = os.environ.get("LABELS_KEY", "labels.txt")
+MAX_VIDEO_FRAMES = int(os.environ.get("MAX_VIDEO_FRAMES", "20"))
 
 MODEL_DIR = Path("/tmp/ecolens_models")
 MD_MODEL_PATH = MODEL_DIR / "mdv5a.pt"
@@ -402,24 +404,76 @@ def notify_subscribers(tags, file_url, thumbnail_url):
     if not SNS_TOPIC_ARN or not tags:
         return
 
+    detected_tags = sorted(tags.keys())
+
     message = (
         "New wildlife detected.\n"
-        f"Species: {', '.join(tags.keys())}\n"
-        f"File URL: {file_url}\n"
-        f"Thumbnail URL: {thumbnail_url or 'N/A'}"
+        f"Species: {', '.join(detected_tags)}"
     )
 
-    publish_args = {
-        "TopicArn": SNS_TOPIC_ARN,
-        "Subject": "EcoLens: New wildlife detected",
-        "Message": message,
+    get_sns_client().publish(
+        TopicArn=SNS_TOPIC_ARN,
+        Subject="EcoLens: New wildlife detected",
+        Message=message,
+        MessageAttributes={
+            "species": {
+                "DataType": "String.Array",
+                "StringValue": json.dumps(detected_tags),
+            }
+        },
+    )
+
+
+def _file_id_from_file_key(file_key):
+    file_key = unquote((file_key or "").strip())
+    return hashlib.sha256(file_key.encode("utf-8")).hexdigest()
+
+
+def update_detection_progress(file_id, status, progress, stage, error=None, file_key=None):
+    document = {
+        "file_id": file_id,
+        "status": status,
+        "progress": progress,
+        "stage": stage,
+        "updated_at": datetime.now(timezone.utc),
     }
 
-    if SNS_TOPIC_ARN.endswith(".fifo"):
-        publish_args["MessageGroupId"] = "ecolens-notifications"
-        publish_args["MessageDeduplicationId"] = str(uuid.uuid4())
+    if file_key:
+        document["file_key"] = file_key
 
-    get_sns_client().publish(**publish_args)
+    if error is not None:
+        document["error"] = str(error)
+
+    write_document("detection_status", file_id, document)
+
+
+def _handle_detection_status(request):
+    file_key = (
+        request.args.get("fileKey")
+        or request.args.get("file_key")
+    )
+
+    if not file_key:
+        return _json_error("fileKey is required", 400)
+
+    file_key = unquote(file_key)
+    file_id = _file_id_from_file_key(file_key)
+    status_doc = get_document("detection_status", file_id)
+
+    if not status_doc:
+        return _json_error(
+            "Detection status not found",
+            404,
+            file_key=file_key,
+        )
+
+    return jsonify({
+        "file_key": status_doc.get("file_key") or file_key,
+        "status": status_doc.get("status"),
+        "progress": status_doc.get("progress", 0),
+        "stage": status_doc.get("stage"),
+        "error": status_doc.get("error"),
+    }), 200
 
 
 def _handle_inference(request):
@@ -442,6 +496,11 @@ def _handle_inference(request):
     if not ai_ready_uris and legacy_file_url:
         ai_ready_uris = [legacy_file_url]
 
+    total_frame_count = len(ai_ready_uris)
+    if total_frame_count > MAX_VIDEO_FRAMES:
+        ai_ready_uris = ai_ready_uris[:MAX_VIDEO_FRAMES]
+    processed_frame_count = len(ai_ready_uris)
+
     if not file_key and not legacy_file_url:
         return _json_error("fileKey or file_url is required", 400)
 
@@ -460,6 +519,9 @@ def _handle_inference(request):
         file_type = "video" if len(ai_ready_uris) > 1 else "image"
 
     try:
+        update_detection_progress(file_id, "processing", 0, "queued", file_key=file_key)
+        update_detection_progress(file_id, "processing", 10, "downloading", file_key=file_key)
+
         local_paths = []
 
         for index, uri in enumerate(ai_ready_uris):
@@ -468,10 +530,14 @@ def _handle_inference(request):
             local_paths.append(local_path)
 
         # Load MegaDetector once for all image/video frames.
+        update_detection_progress(file_id, "processing", 30, "detecting", file_key=file_key)
+
         tags, all_detections = detect_species_from_images(
             local_paths,
             ai_ready_uris,
         )
+
+        update_detection_progress(file_id, "processing", 80, "classifying", file_key=file_key)
 
         for local_path in local_paths:
             local_path.unlink(missing_ok=True)
@@ -489,6 +555,8 @@ def _handle_inference(request):
             "thumbnail_url": thumbnail_url,
             "checksum": checksum,
             "ai_ready_uris": ai_ready_uris,
+            "total_frame_count": total_frame_count,
+            "processed_frame_count": processed_frame_count,
             "tags": tags,
             "auto_tags": list(tags.keys()),
             "manual_tags": [],
@@ -499,7 +567,9 @@ def _handle_inference(request):
             "updated_at": now,
         }
 
+        update_detection_progress(file_id, "processing", 90, "saving", file_key=file_key)
         write_document("media", file_id, document)
+        update_detection_progress(file_id, "processed", 100, "completed", file_key=file_key)
 
         try:
             notify_subscribers(tags, file_url, thumbnail_url)
@@ -516,6 +586,17 @@ def _handle_inference(request):
         }), 200
 
     except Exception as error:
+        try:
+            update_detection_progress(
+                file_id,
+                "failed",
+                100,
+                "failed",
+                error=str(error),
+            )
+        except Exception as progress_error:
+            print(f"Failed to save detection progress: {progress_error}")
+
         write_document("media", file_id, {
             "file_id": file_id,
             "file_key": file_key,
@@ -669,23 +750,190 @@ def _handle_subscribe(request):
     }), 200
 
 
+
+def get_document(collection, doc_id):
+    response = firestore_session.get(
+        document_url(collection, doc_id),
+        timeout=30,
+    )
+
+    if response.status_code == 404:
+        return None
+
+    response.raise_for_status()
+    return doc_to_python(response.json())
+
+
+def subscription_doc_id(user_id):
+    return user_id.replace("/", "_")
+
+
+def _handle_get_subscriptions(request):
+    user_id = request.args.get("userId")
+
+    if not user_id:
+        return _json_error("userId is required", 400)
+
+    subscription = get_document(
+        "subscriptions",
+        subscription_doc_id(user_id),
+    )
+
+    if not subscription:
+        return jsonify({
+            "userId": user_id,
+            "tags": [],
+            "status": "inactive",
+        }), 200
+
+    return jsonify({
+        "userId": user_id,
+        "email": subscription.get("email"),
+        "tags": subscription.get("tags", []),
+        "status": subscription.get("status", "active"),
+    }), 200
+
+
+def _handle_add_subscription(request):
+    payload = _get_payload(request)
+
+    user_id = payload.get("userId") or payload.get("user_id")
+    email = payload.get("email")
+    tag = payload.get("tag")
+
+    if not user_id:
+        return _json_error("userId is required", 400)
+
+    if not tag or not isinstance(tag, str):
+        return _json_error("tag is required", 400)
+
+    tag = tag.strip()
+    doc_id = subscription_doc_id(user_id)
+    existing = get_document("subscriptions", doc_id)
+    tags = set(existing.get("tags", [])) if existing else set()
+    tags.add(tag)
+
+    now = datetime.now(timezone.utc)
+
+    write_document("subscriptions", doc_id, {
+        "user_id": user_id,
+        "email": email or (existing or {}).get("email"),
+        "tags": sorted(tags),
+        "status": "active",
+        "created_at": (existing or {}).get("created_at") or now,
+        "updated_at": now,
+    })
+
+    return jsonify({
+        "status": "subscribed",
+        "userId": user_id,
+        "tags": sorted(tags),
+    }), 200
+
+
+def _handle_delete_subscription(request, tag=None):
+    payload = _get_payload(request)
+
+    user_id = (
+        request.args.get("userId")
+        or request.args.get("user_id")
+        or payload.get("userId")
+        or payload.get("user_id")
+    )
+
+    if tag is None:
+        tag = payload.get("tag")
+
+    if not user_id:
+        return _json_error("userId is required", 400)
+
+    if not tag:
+        return _json_error("tag is required", 400)
+
+    tag = unquote(tag).strip().lower()
+    doc_id = subscription_doc_id(user_id)
+    existing = get_document("subscriptions", doc_id)
+
+    if not existing:
+        return _json_error("Subscription not found", 404)
+
+    tags = set(existing.get("tags", []))
+    tags.discard(tag)
+
+    if tags:
+        write_document("subscriptions", doc_id, {
+            "user_id": user_id,
+            "email": existing.get("email"),
+            "tags": sorted(tags),
+            "status": "active",
+            "created_at": existing.get("created_at"),
+            "updated_at": datetime.now(timezone.utc),
+        })
+    else:
+        delete_document("subscriptions", doc_id)
+
+    return jsonify({
+        "status": "unsubscribed",
+        "userId": user_id,
+        "removedTag": tag,
+        "tags": sorted(tags),
+    }), 200
+
+
+
+
+CORS_HEADERS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Shared-Secret",
+}
+
+
+def _add_cors(result):
+    if isinstance(result, tuple):
+        response = result[0]
+        status = result[1] if len(result) > 1 else 200
+    else:
+        response = result
+        status = 200
+
+    for key, value in CORS_HEADERS.items():
+        response.headers[key] = value
+
+    return response, status
+
 @functions_framework.http
 def process_file(request):
+    if request.method == "OPTIONS":
+        from flask import Response
+        return Response("", status=204, headers=CORS_HEADERS)
+
     if not _check_secret(request):
-        return _json_error("Unauthorized", 401)
+        return _add_cors(_json_error("Unauthorized", 401))
 
     path = _normalised_path(request)
 
     if path in ("/", "/inference") and request.method == "POST":
-        return _handle_inference(request)
+        result = _handle_inference(request)
+    elif path == "/tags/modify" and request.method == "POST":
+        result = _handle_modify_tags(request)
+    elif path == "/files/delete" and request.method == "POST":
+        result = _handle_delete_files(request)
+    elif path == "/subscriptions" and request.method == "GET":
+        result = _handle_get_subscriptions(request)
+    elif path == "/subscriptions" and request.method == "POST":
+        result = _handle_add_subscription(request)
+    elif path == "/subscriptions" and request.method == "DELETE":
+        result = _handle_delete_subscription(request)
+    elif path.startswith("/subscriptions/") and request.method == "DELETE":
+        tag = path.removeprefix("/subscriptions/")
+        result = _handle_delete_subscription(request, tag)
+    elif path == "/detection-status" and request.method == "GET":
+        result = _handle_detection_status(request)
+    elif path == "/subscribe" and request.method == "POST":
+        result = _handle_subscribe(request)
+    else:
+        result = _json_error("Not found", 404, path=path)
 
-    if path == "/tags/modify" and request.method == "POST":
-        return _handle_modify_tags(request)
+    return _add_cors(result)
 
-    if path == "/files/delete" and request.method == "POST":
-        return _handle_delete_files(request)
-
-    if path == "/subscribe" and request.method == "POST":
-        return _handle_subscribe(request)
-
-    return _json_error("Not found", 404, path=path)
