@@ -108,30 +108,10 @@
           <span class="progress-label">Uploading {{ uploadProgress }}%</span>
         </div>
 
-        <!-- Detection progress: stage pipeline -->
-        <div v-if="uploadStep === 'analysing'" class="analysis-panel">
-          <p class="analysis-title">
-            <span class="spinner spinner-green"></span>
-            Analysing — {{ stageLabel }}
-          </p>
-          <div class="stage-pipeline">
-            <template v-for="(stage, si) in STAGES" :key="stage.key">
-              <div class="stage-node" :class="stageNodeClass(si)">
-                <div class="node-circle">
-                  <svg v-if="si < currentStageIndex" width="10" height="10" viewBox="0 0 10 10" fill="none">
-                    <polyline points="1.5,5.5 4,8 8.5,2" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-                  </svg>
-                  <span v-else-if="si === currentStageIndex" class="node-spinner"></span>
-                </div>
-                <span class="node-label">{{ stage.label }}</span>
-              </div>
-              <div v-if="si < STAGES.length - 1" class="stage-connector" :class="{ filled: si < currentStageIndex }"></div>
-            </template>
-          </div>
-          <div class="analysis-bar-wrap">
-            <div class="analysis-bar" :style="{ width: detectionProgress + '%' }"></div>
-          </div>
-          <span class="analysis-pct">{{ detectionProgress }}%</span>
+        <!-- Detection progress -->
+        <div v-if="uploadStep === 'analysing'" class="progress-wrap">
+          <div class="progress-bar" :style="{ width: detectionProgress + '%' }"></div>
+          <span class="progress-label">Analysing {{ detectionProgress }}%</span>
         </div>
 
         <!-- Detection complete banner -->
@@ -245,25 +225,6 @@ const errorMsg = ref('')
 const results = ref([])
 const videoResults = ref([])
 
-const STAGES = [
-  { key: 'queued',      label: 'Queued' },
-  { key: 'downloading', label: 'Downloading' },
-  { key: 'detecting',   label: 'Detecting' },
-  { key: 'classifying', label: 'Classifying' },
-  { key: 'saving',      label: 'Saving' },
-  { key: 'completed',   label: 'Complete' },
-]
-
-const currentStageIndex = computed(() => {
-  const idx = STAGES.findIndex(s => s.key === detectionStage.value)
-  return idx >= 0 ? idx : 0
-})
-
-function stageNodeClass(i) {
-  if (i < currentStageIndex.value) return 'stage-done'
-  if (i === currentStageIndex.value) return 'stage-active'
-  return 'stage-pending'
-}
 
 const ACCEPTED_IMAGE = 'image/jpeg,image/png,image/jpg'
 const ACCEPTED_VIDEO = 'video/mp4,video/quicktime,video/x-msvideo,video/webm'
@@ -288,16 +249,6 @@ const stepLabel = computed(() => {
   return labels[uploadStep.value] ?? 'Detect Species'
 })
 
-const STAGE_LABELS = {
-  queued:      'Queued — waiting to start…',
-  downloading: 'Downloading file…',
-  detecting:   'Detecting objects…',
-  classifying: 'Classifying species…',
-  saving:      'Saving results…',
-  completed:   'Complete',
-  failed:      'Failed',
-}
-const stageLabel = computed(() => STAGE_LABELS[detectionStage.value] || 'Analysing…')
 
 const sizeWarning = computed(() => {
   if (!selectedFile.value) return ''
@@ -699,112 +650,6 @@ h2 { margin: 0 0 8px; font-size: 22px; color: #1a1a2e; }
   text-align: right;
 }
 
-/* ── Analysis panel ── */
-.analysis-panel {
-  margin-top: 16px;
-  background: #f8fffe;
-  border: 1px solid #d4f5e9;
-  border-radius: 12px;
-  padding: 18px 20px 14px;
-  text-align: left;
-}
-.analysis-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  font-weight: 600;
-  color: #1a6b47;
-  margin: 0 0 16px;
-}
-.spinner-green {
-  border-color: rgba(46,204,113,0.25);
-  border-top-color: #2ecc71;
-  width: 14px;
-  height: 14px;
-  border-width: 2px;
-}
-
-/* Stage pipeline */
-.stage-pipeline {
-  display: flex;
-  align-items: center;
-  gap: 0;
-  margin-bottom: 14px;
-  overflow-x: auto;
-  padding-bottom: 4px;
-}
-.stage-node {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 5px;
-  flex-shrink: 0;
-}
-.node-circle {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.3s, border-color 0.3s;
-}
-.stage-done .node-circle  { background: #2ecc71; border: 2px solid #2ecc71; }
-.stage-active .node-circle { background: white; border: 2px solid #2ecc71; }
-.stage-pending .node-circle { background: white; border: 2px solid #dde4ec; }
-
-.node-spinner {
-  width: 10px;
-  height: 10px;
-  border: 2px solid rgba(46,204,113,0.25);
-  border-top-color: #2ecc71;
-  border-radius: 50%;
-  animation: spin 0.7s linear infinite;
-  display: block;
-}
-.node-label {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.3px;
-  white-space: nowrap;
-}
-.stage-done .node-label  { color: #2ecc71; }
-.stage-active .node-label { color: #1a6b47; }
-.stage-pending .node-label { color: #b0bec5; }
-
-.stage-connector {
-  flex: 1;
-  height: 2px;
-  background: #dde4ec;
-  min-width: 12px;
-  max-width: 40px;
-  margin-bottom: 15px;
-  transition: background 0.3s;
-}
-.stage-connector.filled { background: #2ecc71; }
-
-/* Progress bar inside analysis panel */
-.analysis-bar-wrap {
-  height: 6px;
-  background: #d4f5e9;
-  border-radius: 3px;
-  overflow: hidden;
-}
-.analysis-bar {
-  height: 100%;
-  background: linear-gradient(90deg, #2ecc71, #27ae60);
-  border-radius: 3px;
-  transition: width 0.4s ease;
-}
-.analysis-pct {
-  display: block;
-  text-align: right;
-  font-size: 11px;
-  font-weight: 700;
-  color: #2ecc71;
-  margin-top: 4px;
-}
 
 /* ── Done banner ── */
 .done-banner {

@@ -57,7 +57,7 @@ export async function syncSubscriptionsWithGateway() {
   const tags = latestSubs.map(s => s.tag)
 
   const fullUrl = `${BASE_URL}${SNS_SYNC_PATH}`
-  console.log('[debug] sync URL:', fullUrl)  // ← 加这行
+  console.log('[debug] sync URL:', fullUrl)  
 
   const res = await fetchWithAuth(fullUrl, {
     method: 'POST',
