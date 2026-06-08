@@ -161,7 +161,7 @@ button:disabled {
   text-decoration: underline;
 }
 
-/* 平板 */
+
 @media (max-width: 600px) {
   .auth-card {
     padding: 28px 20px;
@@ -174,11 +174,10 @@ button:disabled {
 
   input,
   button {
-    font-size: 16px; /* 防止 iOS 自动缩放 */
+    font-size: 16px; 
   }
 }
 
-/* 手机竖屏 */
 @media (max-width: 390px) {
   .auth-container {
     align-items: flex-start;
