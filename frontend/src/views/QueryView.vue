@@ -37,6 +37,10 @@
         <form class="query-form" @submit.prevent="runQuery">
           <template v-if="queryType === 'count'">
             <label>
+              Tag
+              <input v-model="queryValue" type="text" placeholder="dingo, kangaroo, human" />
+            </label>
+            <label>
               Min
               <input v-model="minCount" type="number" min="0" placeholder="0" />
             </label>
@@ -509,7 +513,7 @@ h1 {
 
 .query-form {
   display: grid;
-  grid-template-columns: minmax(140px, 1fr) minmax(140px, 1fr) auto;
+  grid-template-columns: minmax(140px, 1fr) minmax(140px, 1fr) minmax(140px, 1fr) auto;
   gap: 12px;
   align-items: end;
 }

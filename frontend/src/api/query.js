@@ -27,6 +27,7 @@ const mockRecords = [
     commonName: 'southern cassowary',
     confidence: 0.94,
     count: 1,
+    tagCounts: { cassowary: 1, bird: 1, rainforest: 1 },
     tags: ['cassowary', 'bird', 'rainforest'],
     uploadedAt: '2026-06-03T07:42:00Z',
   },
@@ -40,6 +41,7 @@ const mockRecords = [
     commonName: 'domestic cat',
     confidence: 0.89,
     count: 1,
+    tagCounts: { invasive: 1, night: 1 },
     tags: ['invasive', 'night'],
     uploadedAt: '2026-06-02T12:18:00Z',
   },
@@ -53,6 +55,7 @@ const mockRecords = [
     commonName: 'wild boar',
     confidence: 0.86,
     count: 3,
+    tagCounts: { invasive: 3, group: 3 },
     tags: ['invasive', 'group'],
     uploadedAt: '2026-06-01T22:06:00Z',
   },
@@ -66,6 +69,7 @@ const mockRecords = [
     commonName: 'red-legged pademelon',
     confidence: 0.91,
     count: 2,
+    tagCounts: { mammal: 2, day: 2 },
     tags: ['mammal', 'day'],
     uploadedAt: '2026-05-31T03:33:00Z',
   },
@@ -86,6 +90,7 @@ function normaliseRecord(record) {
     commonName: record.commonName || record.common_name || '',
     confidence: Number(record.confidence ?? 0),
     count: Number(record.count ?? record.quantity ?? 0),
+    tagCounts: record.tagCounts || record.tag_counts || {},
     tags: Array.isArray(record.tags) ? record.tags : [],
     uploadedAt: record.uploadedAt || record.uploaded_at || record.createdAt || '',
   }
@@ -113,7 +118,10 @@ function filterMock({ type, value, minCount, maxCount }) {
   if (type === 'count') {
     const min = Number(minCount || 0)
     const max = maxCount === '' || maxCount == null ? Infinity : Number(maxCount)
-    return mockRecords.filter(record => record.count >= min && record.count <= max)
+    return mockRecords.filter(record => {
+      const count = term ? Number(record.tagCounts?.[term] || 0) : record.count
+      return count >= min && count <= max
+    })
   }
 
   if (type === 'thumbnail') {
