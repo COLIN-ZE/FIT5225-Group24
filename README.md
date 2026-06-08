@@ -27,7 +27,7 @@ https://github.com/COLIN-ZE/FIT5225-Group24
 - Duplicate upload detection to avoid repeated processing.
 - Thumbnail generation for images, video frame extraction, and AI-ready media preparation.
 - Wildlife detection and classification using MegaDetector and a species classifier.
-- Firestore persistence for species, counts, confidence scores, bounding boxes, file URLs and tags.
+- Firestore persistence for species, counts, confidence scores, file URLs and tags.
 - Query support by all results, tag, species, count, thumbnail and file name.
 - Manual tag updates for single files and batches.
 - File deletion across S3 and Firestore records.
@@ -66,7 +66,7 @@ Important files:
 frontend/src/api/          API clients
 frontend/src/views/        Page views
 frontend/src/router/       Vue Router setup
-frontend/.env.example      Frontend environment template
+frontend/.env              Frontend environment
 ```
 
 Run locally:
