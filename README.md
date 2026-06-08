@@ -272,7 +272,6 @@ Hypsiprymnodon_moschatus
 Megapodius_reinwardt
 Perameles_nasuta
 Sus_scrofa
-Uromys_caudimaculatus
 ```
 
 
