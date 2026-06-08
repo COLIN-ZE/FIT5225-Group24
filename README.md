@@ -181,16 +181,6 @@ Request body:
 }
 ```
 
-Required environment variables:
-
-```env
-SNS_TOPIC_ARN=
-AWS_REGION=ap-southeast-2
-CORS_ORIGIN=
-```
-
-Required IAM permissions:
-
 ```text
 sns:ListSubscriptionsByTopic
 sns:SetSubscriptionAttributes
@@ -221,14 +211,6 @@ Handler:
 ```text
 lambda.lambda_handler
 ```
-
-Required environment variables:
-
-```env
-SNS_TOPIC_ARN=
-```
-
-Required IAM permissions:
 
 ```text
 sns:Subscribe
