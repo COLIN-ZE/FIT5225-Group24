@@ -47,9 +47,6 @@ https://github.com/COLIN-ZE/FIT5225-Group24
 |-- gcp-ml-inference/            GCP Cloud Function for ML inference and Firestore writes
 |-- gcp-query-api/               GCP Cloud Function query/subscription API
 |-- test_images/                 Sample wildlife images for testing
-|-- AussieEcoLense/              Local model package, ignored by Git
-|-- FIT5225 2026 S1 A2.pdf
-`-- FIT5225 2026 S1 A2 Marking Rubric.pdf
 ```
 
 ## Module Overview
