@@ -296,9 +296,5 @@ Sus_scrofa
 Uromys_caudimaculatus
 ```
 
-Assignment files:
-
-- `FIT5225 2026 S1 A2.pdf`
-- `FIT5225 2026 S1 A2 Marking Rubric.pdf`
 
 
