@@ -66,7 +66,7 @@ Important files:
 frontend/src/api/          API clients
 frontend/src/views/        Page views
 frontend/src/router/       Vue Router setup
-frontend/.env      Frontend environment
+frontend/.env              Frontend environment
 ```
 
 Run locally:
