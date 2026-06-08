@@ -221,6 +221,11 @@ def _normalise_record(doc_id, data):
     tag_counts = data.get(FIELD_TAGS) or {}
     if not isinstance(tag_counts, dict):
         tag_counts = {}
+    tag_counts = {
+        str(key).strip().lower(): int(value or 0)
+        for key, value in tag_counts.items()
+        if str(key).strip()
+    }
 
     all_tags = data.get(FIELD_ALL_TAGS) or []
     if not isinstance(all_tags, list):
