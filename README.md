@@ -9,7 +9,7 @@ Vue frontend
   -> AWS API Gateway + Cognito
   -> AWS Lambda
   -> Amazon S3
-  -> GCP Cloud 
+  -> GCP Cloud Function
   -> Firestore
   -> Cloud Storgae bucket
   -> AWS SNS email notification
