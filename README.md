@@ -120,7 +120,7 @@ Main endpoints:
 
 ```text
 POST /inference
-GET  /detection-status/{file_id}
+GET  /detection-status?fileKey=<file_key>
 POST /tags/modify
 POST /files/delete
 GET  /subscriptions
